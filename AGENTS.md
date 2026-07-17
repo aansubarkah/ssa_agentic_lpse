@@ -24,6 +24,17 @@ Everything else is helper/config scaffolding. `main.py` is a stub.
 - **Node.js**: v22, zero runtime deps; `npm install` pulls dev-only `exceljs`
 - No tests, no linter, no typechecker
 
+## context-mode tools
+
+context-mode is active — prefer these over inline `bash`/`cat` for large outputs. Use `uv run python` for any Python invocation.
+
+- **Hierarchy**: `ctx_batch_execute` > `ctx_execute` > `ctx_execute_file` > `ctx_search`
+- Read/edit files → `ctx_execute_file`
+- Multi-command research → `ctx_batch_execute`
+- Web pages → `ctx_fetch_and_index`, then `ctx_search`
+- Index docs → `ctx_index`
+- Stats → `ctx_stats`; doctor → `ctx_doctor`; upgrade → `ctx_upgrade`; purge → `ctx_purge`
+
 ## Critical gotchas
 
 | Gotcha | Detail |

@@ -38,6 +38,20 @@ There is no build step, no test suite, and no linter configured.
   - Run: `uv run python spse_pipeline.py ...` or plain `python spse_pipeline.py ...`
 - **Node.js** v22, zero runtime deps (native `https` + `zlib`); `exceljs` is dev-only (used by `csv_to_excel.js`). `npm install` pulls dev deps.
 
+## context-mode tools
+
+context-mode is active. Prefer these MCP tools over inline `bash`/`cat` so large outputs stay out of the context window — only what you print (`console.log`) enters context. Hierarchy:
+
+`ctx_batch_execute` > `ctx_execute` > `ctx_execute_file` > `ctx_search`
+
+- Read/edit files → `ctx_execute_file`
+- Multi-command research → `ctx_batch_execute`
+- Web pages → `ctx_fetch_and_index`, then `ctx_search`
+- Index docs → `ctx_index`
+- Stats → `ctx_stats`; doctor → `ctx_doctor`; upgrade → `ctx_upgrade`; purge → `ctx_purge`
+
+Run any Python via `uv run python` (uv-managed — see Environment).
+
 ## Architecture: the scrape → CSV pipeline
 
 The data flow across the SPSE site is the key concept; it is implemented identically in `spse_pipeline.py` and the legacy `scrape_all.*`:
