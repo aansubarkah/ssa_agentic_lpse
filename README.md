@@ -1,8 +1,19 @@
-# SPSE Kemkes 2025 Scraper
+# SPSE Scraper & CSV Exporter
 
-Scraper otomatis untuk mengumpulkan data pengadaan (procurement) dari portal SPSE Kementerian Kesehatan RI tahun 2025.
+Scraper otomatis untuk mengumpulkan data pengadaan (procurement) dari portal SPSE — bekerja untuk **agency & tahun apapun**, sekaligus export ke CSV pipe-delimited.
 
 > **SPSE** = Sistem Pengadaan Secara Elektronik — platform e-procurement pemerintah Indonesia (Phoenix/Elixir).
+
+## 🚀 Script mana yang harus dijalankan?
+
+| Skenario | Script |
+|---|---|
+| **Scrape agency/tahun apapun + export CSV (RECOMMENDED)** | `python spse_pipeline.py --url <URL> --tahun <TAHUN>` |
+| Re-export CSV dari data yang sudah di-scrape (tanpa download) | `python spse_pipeline.py --url <URL> --tahun <TAHUN> --skip-json --skip-peserta --skip-pengumuman` |
+| Legacy: scrape Kemkes 2025 saja (tanpa CSV) | `python scrape_all.py` atau `node scrape_all.js` |
+| Legacy: convert HTML tender Kemkes 2025 → CSV | `node convert_to_csv.js` |
+
+> **`spse_pipeline.py`** adalah script utama & paling lengkap: scrape + CSV dalam satu perintah, multi-agency, multi-tahun, semua kategori. Script lain (`scrape_all.py/js`, `convert_to_csv.js`) adalah versi lama yang hardcoded untuk **Kemkes 2025**.
 
 ## Data Apa yang Diambil?
 
@@ -20,36 +31,61 @@ Untuk setiap paket diambil:
 
 ## Quick Start
 
-### Python (rekomendasi)
+### `spse_pipeline.py` (RECOMMENDED — any agency, any year)
 
 ```bash
-# Install dependencies
-uv sync
+# Install dependency
+pip install requests   # atau: uv sync
+
+# Full pipeline: scrape + export single CSV
+python spse_pipeline.py --url https://spse.inaproc.id/mahkamahagung --tahun 2025
 
 # Test: 5 paket per kategori
-uv run python scrape_all.py --limit 5 --skip-json
+python spse_pipeline.py --url https://spse.inaproc.id/kemkes --tahun 2024 --limit 5
 
-# Full scrape
-uv run python scrape_all.py
+# Tender saja
+python spse_pipeline.py --url https://spse.inaproc.id/mahkamahagung --tahun 2025 --categories tender
 
-# Hanya HTML (skip JSON, pakai yang sudah ada)
-uv run python scrape_all.py --skip-json
+# Re-export CSV dari data yang sudah di-scrape (tanpa download)
+python spse_pipeline.py --url https://spse.inaproc.id/kemkes --tahun 2025 \
+    --skip-json --skip-peserta --skip-pengumuman
 
-# Hanya JSON (skip HTML)
-uv run python scrape_all.py --skip-peserta --skip-pengumuman
+# Cek jumlah paket tanpa download
+python spse_pipeline.py --url https://spse.inaproc.id/mahkamahagung --tahun 2025 --dry
 ```
 
-### Node.js
+Output tunggal: `output/<agency>/<tahun>/<agency>_<tahun>.csv` (pipe `|` delimited, 28 kolom, semua kategori tergabung dengan kolom `kategori`).
+
+### Legacy scripts (Kemkes 2025 hardcoded)
 
 ```bash
-# Test
-node scrape_all.js --limit 5 --skip-json
+# Python — scrape JSON + HTML (tanpa CSV)
+uv run python scrape_all.py --limit 5
 
-# Full scrape
+# Node.js — scrape JSON + HTML
 node scrape_all.js
+
+# Convert HTML tender → CSV (pipe delimited)
+node convert_to_csv.js
 ```
 
 ## Command Options
+
+### `spse_pipeline.py`
+
+| Flag | Deskripsi |
+|---|---|
+| `--url URL` | **(wajib)** URL agency SPSE, mis. `https://spse.inaproc.id/mahkamahagung` |
+| `--tahun TAHUN` | Tahun anggaran (default: tahun berjalan) |
+| `--categories C` | Subset: `tender,nontender,pencatatan` (default: semua) |
+| `--limit N` | Batasi N paket per kategori (testing) |
+| `--skip-json` | Skip scrape JSON, pakai file yang sudah ada |
+| `--skip-peserta` | Skip download HTML peserta/pemenang |
+| `--skip-pengumuman` | Skip download HTML pengumuman |
+| `--skip-csv` | Skip export CSV (hanya scrape) |
+| `--dry` | Cek jumlah paket tanpa download |
+
+### Legacy (`scrape_all.py` / `scrape_all.js`)
 
 | Flag | Deskripsi |
 |---|---|
@@ -61,6 +97,26 @@ node scrape_all.js
 | `--dry` | Cek jumlah paket tanpa download |
 
 ## Output
+
+### `spse_pipeline.py` (per agency + tahun)
+
+```
+output/
+└── <agency>/                         # mis. mahkamahagung, kemkes
+    └── <tahun>/                      # mis. 2025
+        ├── tender_<tahun>.json
+        ├── non_tender_<tahun>.json
+        ├── pencatatan_non_tender_<tahun>.json
+        ├── html/
+        │   ├── tender/{peserta,pengumuman}/
+        │   ├── non_tender/{peserta,pengumuman}/
+        │   └── pencatatan/{pemenang,pengumuman}/
+        └── <agency>_<tahun>.csv      # ⭐ single combined, pipe-delimited (28 kolom)
+```
+
+**Kolom CSV gabungan (28):** `kategori` + field JSON (kode, nama, instansi, status, nilai_pagu, …) + 9 field pengumuman (`kode_rup`, `nama_paket`, `nilai_hps_paket`, `lokasi_pekerjaan`, …) + 5 field peserta (`peserta_no`, `peserta_nama`, `peserta_npwp`, `peserta_harga_penawaran`, `peserta_harga_terkoreksi`). Tiap paket di-expand menjadi N baris (1 per peserta) — sama dengan logika `convert_to_csv.js`.
+
+### Legacy (`scrape_all.py` — Kemkes 2025 flat)
 
 ```
 output/
@@ -117,18 +173,22 @@ Token CSRF harus dikirim sebagai `authenticityToken` (camelCase) — bukan `auth
 ## Struktur Kode
 
 ```
-scrape_all.py       # Script utama (Python) — salinan 1:1 dari scrape_all.js
-scrape_all.js       # Script utama (Node.js)
-scrape_spse.js      # Script lama: daftar pekerjaan + peserta (Node.js)
+spse_pipeline.py     # ⭐ Script utama: scrape + CSV, multi-agency & multi-tahun (Python)
+scrape_all.py        # Legacy: scrape Kemkes 2025 (Python) — salinan 1:1 dari scrape_all.js
+scrape_all.js        # Legacy: scrape Kemkes 2025 (Node.js)
+convert_to_csv.js    # Legacy: convert HTML tender Kemkes 2025 → CSV (Node.js, tender saja)
+convert_no_html.js   # Convert JSON → CSV tanpa parsing HTML
+scrape_spse.js       # Script lama: daftar pekerjaan + peserta (Node.js)
 scrape_pengumuman.js # Script lama: pengumuman saja (Node.js)
-scrape_info.md      # Referensi API: URL, headers, contoh response
+scrape_info.md       # Referensi API: URL, headers, contoh response
 ```
 
 ## Keterbatasan
 
 - `recordsTotal: 2147483647` = `Integer.MAX_VALUE` — bukan jumlah real, paginasi berhenti saat baris kosong
 - Beberapa halaman peserta bisa gagal (403/redirect) — biasanya paket batal atau dibatalkan
-- Data hanya tahun 2025 (hardcoded di URL API)
+- Script legacy (`scrape_all.py/js`, `convert_to_csv.js`) hardcoded untuk **Kemkes 2025** — gunakan `spse_pipeline.py` untuk agency/tahun lain
+- `convert_to_csv.js` hanya memproses kategori **tender**; `spse_pipeline.py` memproses semua kategori sekaligus
 
 ---
 
@@ -136,8 +196,10 @@ scrape_info.md      # Referensi API: URL, headers, contoh response
 
 ## [AGENT CONTEXT] Technical Reference
 
+> **Mulai dari mana?** Untuk hampir semua kebutuhan, gunakan `spse_pipeline.py --url <URL> --tahun <TAHUN>`. Endpoint, column counts, dan HTML URL patterns di bawah sudah diparameterisasi penuh oleh script ini. Script legacy hanya relevant bila mempertahankan output Kemkes 2025 yang lama.
+
 ### Target Server
-- **Base URL**: `https://spse.inaproc.id/kemkes`
+- **Base URL**: `https://spse.inaproc.id/<agency>` — agency = path segment pertama (mis. `kemkes`, `mahkamahagung`)
 - **Backend**: Phoenix (Elixir) — server-side rendered, tidak perlu browser/JS runtime
 - **CSRF**: Token di-embed di JS variable `authenticityToken = '...'` di HTML halaman utama
 - **Cookie session**: `SPSE_SESSION` berisi `___AT` (auth token), `___TS` (timestamp), `___ID` (session ID)
