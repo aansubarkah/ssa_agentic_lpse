@@ -4,7 +4,7 @@ Scraper otomatis untuk mengumpulkan data pengadaan (procurement) dari portal SPS
 
 > **SPSE** = Sistem Pengadaan Secara Elektronik — platform e-procurement pemerintah Indonesia (Phoenix/Elixir).
 
-## 🚀 Script mana yang harus dijalankan?
+## Script mana yang harus dijalankan?
 
 | Skenario | Script |
 |---|---|
@@ -111,7 +111,7 @@ output/
         │   ├── tender/{peserta,pengumuman}/
         │   ├── non_tender/{peserta,pengumuman}/
         │   └── pencatatan/{pemenang,pengumuman}/
-        └── <agency>_<tahun>.csv      # ⭐ single combined, pipe-delimited (28 kolom)
+        └── <agency>_<tahun>.csv      # single combined, pipe-delimited (28 kolom)
 ```
 
 **Kolom CSV gabungan (28):** `kategori` + field JSON (kode, nama, instansi, status, nilai_pagu, …) + 9 field pengumuman (`kode_rup`, `nama_paket`, `nilai_hps_paket`, `lokasi_pekerjaan`, …) + 5 field peserta (`peserta_no`, `peserta_nama`, `peserta_npwp`, `peserta_harga_penawaran`, `peserta_harga_terkoreksi`). Tiap paket di-expand menjadi N baris (1 per peserta) — sama dengan logika `convert_to_csv.js`.
@@ -173,7 +173,7 @@ Token CSRF harus dikirim sebagai `authenticityToken` (camelCase) — bukan `auth
 ## Struktur Kode
 
 ```
-spse_pipeline.py     # ⭐ Script utama: scrape + CSV, multi-agency & multi-tahun (Python)
+spse_pipeline.py     # Script utama: scrape + CSV, multi-agency & multi-tahun (Python)
 scrape_all.py        # Legacy: scrape Kemkes 2025 (Python) — salinan 1:1 dari scrape_all.js
 scrape_all.js        # Legacy: scrape Kemkes 2025 (Node.js)
 convert_to_csv.js    # Legacy: convert HTML tender Kemkes 2025 → CSV (Node.js, tender saja)
