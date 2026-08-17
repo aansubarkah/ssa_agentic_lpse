@@ -53,3 +53,38 @@ def test_peserta_page_has_no_label_value_fields(load_fixture):
 
 def test_tabs_are_included_in_the_result(load_fixture):
     assert len(parse_detail(load_fixture("tender_pemenang"))["tabs"]) == 5
+
+
+def test_tender_winner_table_is_named_and_empty(load_fixture):
+    # Nested table inside a td; header present, no winner rows for this package.
+    tables = parse_detail(load_fixture("tender_pemenang"))["named_tables"]
+    assert "pemenang" in tables
+    assert tables["pemenang"]["header"] == [
+        "Nama Pemenang", "Alamat", "NPWP", "Harga Kontrak", "Nilai PDN", "Nilai UMK"]
+    assert tables["pemenang"]["rows"] == []
+
+
+def test_peserta_table_rows(load_fixture):
+    tables = parse_detail(load_fixture("tender_peserta"))["named_tables"]
+    assert tables["peserta"]["header"] == ["No", "Nama Peserta"]
+    assert len(tables["peserta"]["rows"]) == 5
+    assert tables["peserta"]["rows"][0] == ["1", "Peserta 1"]
+
+
+def test_rup_table_in_nontender(load_fixture):
+    tables = parse_detail(load_fixture("nontender_pengumuman"))["named_tables"]
+    assert tables["rup"]["header"] == ["Kode RUP", "Nama Paket", "Sumber Dana"]
+    assert tables["rup"]["rows"][0][0] == "67643676"
+    assert tables["rup"]["rows"][0][2] == "APBN"
+
+
+def test_realisasi_table_in_swakelola(load_fixture):
+    tables = parse_detail(load_fixture("swakelola_pelaksana"))["named_tables"]
+    assert tables["realisasi"]["header"] == [
+        "No.", "Jenis Realisasi", "Nilai Realisasi", "Tanggal Realisasi"]
+
+
+def test_attachment_url_is_captured(load_fixture):
+    fields = parse_detail(load_fixture("nontender_pengumuman"))["fields"]
+    assert "/dl/" in fields["Uraian Singkat Pekerjaan [url]"]
+

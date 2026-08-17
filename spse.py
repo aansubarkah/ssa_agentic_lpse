@@ -326,6 +326,39 @@ class _DetailParser(HTMLParser):
         self.tables.append({"header": header, "rows": data_rows})
 
 
+# Header signatures that identify a sub-table, checked in order.
+TABLE_SIGNATURES = [
+    ("pemenang", "Nama Pemenang"),
+    ("peserta", "Nama Peserta"),
+    ("rup", "Kode RUP"),
+    ("realisasi", "Jenis Realisasi"),
+    ("kualifikasi", "Jenis Izin"),
+]
+
+
+def name_tables(tables: list[dict]) -> dict[str, dict]:
+    """Key sub-tables by what they contain rather than by position.
+
+    Position is unreliable: the number and order of sub-tables differs per
+    category and per tab. Unrecognised tables are kept as table1, table2, ...
+    so nothing is silently lost.
+    """
+    named: dict[str, dict] = {}
+    unknown = 0
+    for table in tables:
+        header = table["header"]
+        key = None
+        for candidate, marker in TABLE_SIGNATURES:
+            if any(marker in column for column in header):
+                key = candidate
+                break
+        if key is None:
+            unknown += 1
+            key = f"table{unknown}"
+        named.setdefault(key, table)
+    return named
+
+
 def parse_detail(html_text: str) -> dict:
     """Parse one SPSE detail page.
 
@@ -335,8 +368,10 @@ def parse_detail(html_text: str) -> dict:
     """
     parser = _DetailParser()
     parser.feed(html_text)
+    tables = parser.tables
     return {
         "fields": parser.fields,
-        "tables": parser.tables,
+        "tables": tables,
+        "named_tables": name_tables(tables),
         "tabs": find_tabs(html_text),
     }
