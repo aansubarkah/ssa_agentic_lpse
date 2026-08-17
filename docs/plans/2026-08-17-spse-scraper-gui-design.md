@@ -88,11 +88,15 @@ categories:
   `a.nav-link[href]` with **absolute** URLs, `active` marking the current tab.
 - Field rows are `<th class="bgwarning">Label</th><td colspan="N">Value</td>`.
   `colspan` varies (2, 3, 4) between categories; the label/value rule does not.
-- When a `<tr>` contains **two or more** `th.bgwarning` cells it is a horizontal
-  header row, not a label/value pair. This is how the tender Pemenang Berkontrak
-  table renders its six columns. The parser branches on the count.
-- Sub-tables are `table.table-sm` with plain `<th width=...>` header cells.
-  Realisasi tables sit inside `div.bs-callout.bs-callout-info`.
+  Every `th.bgwarning` is a label: across all six fixtures, no `<tr>` contains
+  more than one of them, so there is no horizontal-header exception to handle.
+- Sub-tables (Peserta, Pemenang, RUP, Realisasi, Syarat Kualifikasi) are a
+  **nested `<table class="table table-sm">` inside a `<td colspan="N">`** of the
+  outer table, with a plain attribute-free `<th>` header row. Realisasi tables
+  sit inside `div.bs-callout.bs-callout-info`.
+- Tags carry unpredictable extra attributes — the content root is
+  `<div class="content" style="margin-bottom: 42px">` on the non-tender page.
+  Parse with `html.parser` and inspect attributes; never match tag strings.
 
 Sub-tables encountered:
 
@@ -180,7 +184,10 @@ Walk the saved HTML, `parse_detail()` each tab, join to its list row, and write
 one row per participant or winner.
 
 `parse_detail(html)` returns `{"tab", "fields", "tables", "tabs"}` using stdlib
-`html.parser`. Values are cleaned: `&nbsp;` to space, `Rp. 787.406.000,00` kept
+`html.parser`. Inside `div.content`, a `<tr>` whose first cell is `th.bgwarning`
+yields `fields[label] = td_text`; a nested `<table>` inside a `<td>` becomes a
+sub-table keyed by its header signature (`Peserta`, `Pemenang`, `Realisasi`,
+`RUP`). Values are cleaned: `&nbsp;` to space, `Rp. 787.406.000,00` kept
 raw *and* as numeric `787406000.00`, `11 Agustus 2026` kept raw *and* as
 `2026-08-11`. Both forms reach the CSV so a parse bug destroys nothing. `href`s
 inside a value are preserved.
@@ -255,7 +262,8 @@ still applies, via the client-side filter.
 There is no test suite in this repo, so verification is:
 
 - `parse_detail()` against the six files in `html_examples/` — offline, covers
-  all five categories including the horizontal-header case.
+  all five categories, the nested sub-table case, and an unawarded tender with a
+  reduced tab set.
 - `--dry` to confirm package counts per category.
 - `--limit 5` smoke run per category against a small agency.
 - A resume check: interrupt a run, re-run, confirm it skips completed files.
