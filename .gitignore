@@ -19,3 +19,6 @@ output/
 *.xlsx
 
 tweet*
+
+# Git worktrees
+.worktrees/
