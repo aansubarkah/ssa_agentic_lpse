@@ -362,7 +362,8 @@ def name_tables(tables: list[dict]) -> dict[str, dict]:
 def parse_detail(html_text: str) -> dict:
     """Parse one SPSE detail page.
 
-    Returns {'fields': {label: value}, 'tables': [...], 'tabs': [...]}.
+    Returns {'fields': {label: value}, 'tables': [...],
+    'named_tables': {key: table}, 'tabs': [...]}.
     One parser serves all five categories because every detail page shares
     the same markup contract; see SPSE_SCRAPER.md.
     """
@@ -375,3 +376,86 @@ def parse_detail(html_text: str) -> dict:
         "named_tables": name_tables(tables),
         "tabs": find_tabs(html_text),
     }
+
+
+DELAY_S = 0.6           # between list pages; tuned to avoid rate limiting
+PAGE_SIZE = 10000       # DataTables rows per request
+MAX_RETRIES = 3
+MIN_FILE_SIZE = 200     # bytes; anything smaller is an error page, re-fetch it
+DEFAULT_WORKERS = 8
+
+CATEGORIES: dict[str, dict] = {
+    "tender": {
+        "label": "Tender",
+        "listing": "lelang",
+        "endpoint": "dt/lelang",
+        "query": "?rekanan=&tahun={tahun}&instansiId=",
+        "accepts_tahun": True,
+        "columns": 16,
+        "order_column": 5,
+        "entry_tab": "/lelang/{id}/pengumumanlelang",
+        "id_index": 0,
+    },
+    "nontender": {
+        "label": "Non Tender",
+        "listing": "nontender",
+        "endpoint": "dt/pl",
+        "query": "?tahun={tahun}",
+        "accepts_tahun": True,
+        "columns": 12,
+        "order_column": 5,
+        "entry_tab": "/nontender/{id}/pengumumanpl",
+        "id_index": 0,
+    },
+    "pencatatan": {
+        "label": "Pencatatan Non Tender",
+        "listing": "pencatatan",
+        "endpoint": "dt/nonspk",
+        "query": "?rekanan=&tahun={tahun}&instansiId=",
+        "accepts_tahun": True,
+        "columns": 9,
+        "order_column": 0,
+        "entry_tab": "/pencatatan/pengumumannonspk?id={id}",
+        "id_index": 0,
+    },
+    "swakelola": {
+        "label": "Pencatatan Swakelola",
+        "listing": "swakelola",
+        "endpoint": "dt/swakelola",
+        "query": "",
+        "accepts_tahun": False,
+        "columns": 5,
+        "order_column": 0,
+        "entry_tab": "/swakelola/{id}/pengumuman",
+        "id_index": 0,
+    },
+    "darurat": {
+        "label": "Pencatatan Pengadaan Darurat",
+        "listing": "darurat",
+        "endpoint": "dt/darurat-list",
+        "query": "",
+        "accepts_tahun": False,
+        "columns": 5,
+        "order_column": 0,
+        "entry_tab": "/darurat/pengumumandarurat?id={id}",
+        "id_index": 0,
+    },
+}
+
+
+def list_api_url(base: str, kategori: str, tahun: int) -> str:
+    """URL of the DataTables endpoint for one category."""
+    cfg = CATEGORIES[kategori]
+    return f"{base}/{cfg['endpoint']}{cfg['query'].format(tahun=tahun)}"
+
+
+def listing_url(base: str, kategori: str, tahun: int) -> str:
+    """URL of the human listing page; also the required Referer for detail pages."""
+    cfg = CATEGORIES[kategori]
+    suffix = f"?tahun={tahun}" if cfg["accepts_tahun"] else ""
+    return f"{base}/{cfg['listing']}{suffix}"
+
+
+def entry_tab_url(base: str, kategori: str, paket_id: str) -> str:
+    """First tab to fetch; its nav bar reveals the package's remaining tabs."""
+    return base + CATEGORIES[kategori]["entry_tab"].format(id=paket_id)
