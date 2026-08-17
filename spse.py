@@ -631,7 +631,8 @@ def paginate_list(session, api_url: str, token: str, kategori: str,
     """Fetch every row of one category by paging the DataTables endpoint.
 
     Stops on an empty or short page. Never trusts recordsTotal, which SPSE
-    hardcodes to Integer.MAX_VALUE.
+    hardcodes to Integer.MAX_VALUE. Raises RuntimeError when a page still
+    fails after MAX_RETRIES attempts, so a partial list is never cached.
     """
     rows: list = []
     start = 0
@@ -654,6 +655,13 @@ def paginate_list(session, api_url: str, token: str, kategori: str,
                 log(f"  start={start} attempt {attempt}/{MAX_RETRIES}: {err}")
                 if attempt < MAX_RETRIES:
                     time.sleep(5 * attempt)
+        else:
+            # The loop never broke, so every attempt on this page failed.
+            # Raising (rather than treating it as end-of-data) keeps
+            # scrape_json from caching a silently partial list.json.
+            raise RuntimeError(
+                f"pagination failed at start={start} after {MAX_RETRIES} attempts"
+            )
         if not page:
             break
         rows.extend(page)

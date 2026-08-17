@@ -1,6 +1,8 @@
 import json
 
-from spse import paginate_list
+import pytest
+
+from spse import MAX_RETRIES, paginate_list
 
 
 class FakeDtSession:
@@ -57,3 +59,25 @@ def test_advances_start_between_pages():
                   page_size=2, log=lambda *a: None)
     assert "start=0&" in session.bodies[0] + "&"
     assert "start=2&" in session.bodies[1] + "&"
+
+
+class FakeFailingSession:
+    """Every POST raises; counts calls so the test can pin MAX_RETRIES."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def post(self, url, data=None, headers=None, timeout=None):
+        self.calls += 1
+        raise ConnectionError("connection refused")
+
+
+def test_raises_when_all_retries_fail(monkeypatch):
+    # The backoff sleeps 5s + 10s while exhausting MAX_RETRIES; patch it out
+    # so the test measures the retry count, not wall-clock time.
+    monkeypatch.setattr("spse.time.sleep", lambda seconds: None)
+    session = FakeFailingSession()
+    with pytest.raises(RuntimeError):
+        paginate_list(session, "https://x/dt/lelang", "tok", "tender",
+                      page_size=2, log=lambda *a: None)
+    assert session.calls == MAX_RETRIES
