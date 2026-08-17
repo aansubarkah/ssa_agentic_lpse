@@ -844,3 +844,120 @@ def scrape_html(base: str, kategori: str, tahun: int, ids: list[str],
             json.dumps(stats["failed"], indent=2), encoding="utf-8")
         log(f"  {len(stats['failed'])} paket gagal, dicatat di failed.json")
     return stats
+
+
+# Indonesian detail-page labels -> stable snake_case CSV columns. Labels differ
+# between the five categories, which is why this is a map rather than a fixed
+# per-category column list. Anything absent here survives in extra_json.
+LABEL_MAP = {
+    "Kode Paket": "kode_paket",
+    "Kode Swakelola": "kode_paket",
+    "Nama Paket": "nama_paket",
+    "Nama Tender": "nama_paket",
+    "Nama Swakelola": "nama_paket",
+    "Satuan Kerja": "satuan_kerja",
+    "K/L/PD/Instansi Lainnya": "instansi",
+    "K/L/PD": "instansi",
+    "Jenis Pengadaan": "jenis_pengadaan",
+    "Metode Pengadaan": "metode_pengadaan",
+    "Tahap Paket Saat Ini": "tahap",
+    "Status Paket": "tahap",
+    "Pagu": "pagu",
+    "Nilai Pagu Paket": "pagu",
+    "HPS": "hps",
+    "Nilai HPS Paket": "hps",
+    "Tanggal Pembuatan": "tanggal_pembuatan",
+    "Tanggal Paket Selesai": "tanggal_selesai",
+    "Tahun Anggaran": "tahun_anggaran",
+    "Lokasi Pekerjaan": "lokasi",
+    "Tipe Pelaksana": "tipe_pelaksana",
+    "Tipe Pelaksana Swakelola": "tipe_pelaksana",
+    "Nilai Total Realisasi": "nilai_realisasi",
+}
+
+MONEY_COLUMNS = ("pagu", "hps", "harga_kontrak", "nilai_realisasi")
+DATE_COLUMNS = ("tanggal_pembuatan", "tanggal_selesai")
+
+CSV_COLUMNS = [
+    "slug", "nama_instansi", "kategori", "tahun",
+    "kode_paket", "nama_paket", "instansi", "satuan_kerja",
+    "jenis_pengadaan", "metode_pengadaan", "tahap",
+    "pagu", "pagu_num", "hps", "hps_num",
+    "tanggal_pembuatan", "tanggal_pembuatan_iso",
+    "tanggal_selesai", "tanggal_selesai_iso",
+    "tahun_anggaran", "lokasi", "tipe_pelaksana",
+    "kode_rup", "sumber_dana",
+    "nama_pemenang", "alamat", "npwp",
+    "harga_kontrak", "harga_kontrak_num", "nilai_pdn", "nilai_umk",
+    "nilai_realisasi", "nilai_realisasi_num",
+    "sumber_url", "extra_json",
+]
+
+
+def build_rows(detail: dict, slug: str, nama_instansi: str, kategori: str,
+               tahun: int, paket_id: str, sumber_url: str) -> list[dict]:
+    """Flatten one parsed detail page into CSV rows, one per participant."""
+    base_row = {column: "" for column in CSV_COLUMNS}
+    base_row.update({
+        "slug": slug, "nama_instansi": nama_instansi, "kategori": kategori,
+        "tahun": tahun, "kode_paket": paket_id, "sumber_url": sumber_url,
+    })
+
+    extra: dict[str, object] = {}
+    for label, value in detail["fields"].items():
+        column = LABEL_MAP.get(label)
+        if column:
+            base_row[column] = value
+        else:
+            extra[label] = value
+
+    tables = detail["named_tables"]
+    rup = tables.get("rup")
+    if rup and rup["rows"]:
+        first = rup["rows"][0]
+        if len(first) >= 3:
+            base_row["kode_rup"], _, base_row["sumber_dana"] = first[0], first[1], first[2]
+
+    realisasi = tables.get("realisasi")
+    if realisasi and realisasi["rows"]:
+        extra["realisasi"] = realisasi["rows"]
+
+    # An awarded page can carry an empty pemenang table alongside a populated
+    # peserta one, so pick the table that actually has rows rather than the
+    # first key that exists.
+    participants = None
+    for key in ("pemenang", "peserta"):
+        table = tables.get(key)
+        if table and table["rows"]:
+            participants = table
+            break
+
+    rows: list[dict] = []
+    if participants:
+        header = [clean_text(h) for h in participants["header"]]
+        for values in participants["rows"]:
+            row = dict(base_row)
+            cells = dict(zip(header, values))
+            row["nama_pemenang"] = cells.get("Nama Pemenang") or cells.get("Nama Peserta", "")
+            row["alamat"] = cells.get("Alamat", "")
+            row["npwp"] = cells.get("NPWP", "")
+            row["harga_kontrak"] = cells.get("Harga Kontrak", "")
+            row["nilai_pdn"] = cells.get("Nilai PDN", "")
+            row["nilai_umk"] = cells.get("Nilai UMK", "")
+            rows.append(row)
+    else:
+        rows.append(dict(base_row))
+
+    for row in rows:
+        # 'None if unparseable, otherwise the value' -- not `or ""`, which
+        # would turn a legitimate 0.0 into a blank. 'Rp. 0,00' is 4 of the 7
+        # distinct money values in the fixtures, so `or ""` would report
+        # 'realisasi is zero' as 'realisasi is unknown'.
+        for column in MONEY_COLUMNS:
+            nilai = parse_rupiah(row.get(column))
+            row[f"{column}_num"] = "" if nilai is None else nilai
+        for column in DATE_COLUMNS:
+            tanggal = parse_tanggal(row.get(column))
+            row[f"{column}_iso"] = "" if tanggal is None else tanggal
+        row["extra_json"] = json.dumps(extra, ensure_ascii=False) if extra else ""
+    return rows
