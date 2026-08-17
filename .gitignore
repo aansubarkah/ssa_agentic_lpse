@@ -23,6 +23,8 @@ output/
 
 html_examples/
 
+marketing/
+
 # Excel
 *.xlsx
 
