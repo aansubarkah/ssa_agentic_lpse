@@ -12,11 +12,13 @@ import json
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import TypedDict
 from urllib.parse import urlparse
+from urllib.parse import urlparse as _urlparse
 
 import requests
 
@@ -742,3 +744,103 @@ def scrape_json(base: str, slug: str, kategori: str, tahun: int,
     )
     log(f"Tersimpan {len(rows)} baris ke {cache}")
     return rows
+
+
+def tab_filename(url: str) -> str:
+    """Derive a stable filename from a tab url, ignoring its query string."""
+    path = _urlparse(url).path.rstrip("/")
+    return (path.split("/")[-1] or "index") + ".html"
+
+
+def _is_complete(path: Path) -> bool:
+    """A file over MIN_FILE_SIZE counts as done; smaller means an error page."""
+    return path.exists() and path.stat().st_size > MIN_FILE_SIZE
+
+
+def scrape_package_html(session, base: str, kategori: str, paket_id: str,
+                        out_dir: Path, referer: str, fetch=fetch_html,
+                        log=print) -> int:
+    """Download every tab of one package. Returns the number of files written.
+
+    Fetches the entry tab first, reads its nav bar to learn which tabs this
+    package actually has, then fetches the rest. Tab sets vary per package, so
+    discovery beats a hardcoded list.
+    """
+    target = out_dir / str(paket_id)
+    entry_url = entry_tab_url(base, kategori, paket_id)
+    entry_path = target / tab_filename(entry_url)
+
+    written = 0
+    if _is_complete(entry_path):
+        entry_html = entry_path.read_text(encoding="utf-8", errors="replace")
+    else:
+        entry_html = fetch(session, entry_url, referer=referer, log=log)
+        if entry_html is None:
+            return 0
+        target.mkdir(parents=True, exist_ok=True)
+        entry_path.write_text(entry_html, encoding="utf-8")
+        written += 1
+
+    tabs = find_tabs(entry_html)
+    if not tabs:
+        # find_tabs() == [] means "not a detail page" -- a fetch failure,
+        # error page, or login redirect -- never "a package with no tabs":
+        # every real detail page carries at least a Pengumuman tab. Log it
+        # so the package reads as suspicious, not silently complete.
+        log(f"    {entry_url}: tidak ada tab (bukan halaman detail?)")
+    for tab in tabs:
+        path = target / tab_filename(tab["url"])
+        if _is_complete(path):
+            continue
+        html_text = fetch(session, tab["url"], referer=referer, log=log)
+        if html_text is None:
+            continue                      # tab this package legitimately lacks
+        target.mkdir(parents=True, exist_ok=True)
+        path.write_text(html_text, encoding="utf-8")
+        written += 1
+    return written
+
+
+def scrape_html(base: str, kategori: str, tahun: int, ids: list[str],
+                out_dir: Path, workers: int = DEFAULT_WORKERS,
+                cancel=None, progress=None, log=print) -> dict:
+    """Phase 3. Download all tabs for all packages, concurrently.
+
+    The pool fans out over packages; each package's tabs stay sequential inside
+    its worker because the nav bar of the entry tab determines the rest.
+    """
+    listing = listing_url(base, kategori, tahun)
+    session, _ = open_session(listing)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    done = 0
+    stats = {"files": 0, "failed": []}
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(scrape_package_html, session, base, kategori, paket_id,
+                        out_dir, listing, log=lambda *a: None): paket_id
+            for paket_id in ids
+        }
+        for future in as_completed(futures):
+            paket_id = futures[future]
+            done += 1
+            try:
+                stats["files"] += future.result()
+            except Exception as err:
+                log(f"  paket {paket_id} gagal: {type(err).__name__}: {err}")
+                stats["failed"].append(paket_id)
+            if progress:
+                progress(done, len(ids))
+            if done % 25 == 0:
+                log(f"  {done}/{len(ids)} paket, {stats['files']} file baru")
+            if cancel is not None and cancel.is_set():
+                log("  dibatalkan pengguna")
+                for pending in futures:
+                    pending.cancel()
+                break
+
+    if stats["failed"]:
+        (out_dir / "failed.json").write_text(
+            json.dumps(stats["failed"], indent=2), encoding="utf-8")
+        log(f"  {len(stats['failed'])} paket gagal, dicatat di failed.json")
+    return stats
