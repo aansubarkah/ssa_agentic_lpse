@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import sys
+from datetime import date
 
 
 if sys.platform == "win32":
@@ -27,7 +28,7 @@ if sys.platform == "win32":
                 pass
     del _stream, _reconfigure
 
-BULAN = {
+_BULAN = {
     "januari": 1, "februari": 2, "maret": 3, "april": 4, "mei": 5, "juni": 6,
     "juli": 7, "agustus": 8, "september": 9, "oktober": 10, "november": 11,
     "desember": 12,
@@ -44,14 +45,24 @@ _RUPIAH_RE = re.compile(r"^(?:Rp\.?\s*)?([\d.,]+)$", re.IGNORECASE)
 
 
 def clean_text(value: str | None) -> str:
-    """Collapse whitespace and non-breaking spaces into single spaces."""
+    """Collapse runs of whitespace to one space and strip the ends.
+
+    None and every other falsy input become "", so callers can treat a missing
+    cell and an empty cell alike.
+    """
     if not value:
         return ""
+    # \s already covers \xa0, but SPSE values are littered with literal &nbsp;
+    # so the replace stays as documentation of the intent.
     return _WS_RE.sub(" ", value.replace("\xa0", " ")).strip()
 
 
 def parse_rupiah(value: str | None) -> float | None:
-    """'Rp. 787.406.000,00' -> 787406000.0; None when not a currency string."""
+    """'Rp. 787.406.000,00' -> 787406000.0; None when not a currency string.
+
+    The 'Rp' prefix is optional, so a bare '1.000.000,00' also parses; see
+    _RUPIAH_RE for why. Anything else -- 'APBN 2026', 'Lumsum', '-' -- is None.
+    """
     match = _RUPIAH_RE.match(clean_text(value))
     if not match:
         return None
@@ -67,12 +78,19 @@ def parse_rupiah(value: str | None) -> float | None:
 
 
 def parse_tanggal(value: str | None) -> str | None:
-    """'11 Agustus 2026' -> '2026-08-11'; None when not a date."""
+    """'11 Agustus 2026' -> '2026-08-11'; None when not a real date.
+
+    Impossible dates such as '31 Februari 2026' are rejected rather than
+    formatted: a blank is recoverable downstream, a fake ISO date is not.
+    """
     match = _TANGGAL_RE.match(clean_text(value))
     if not match:
         return None
     day, month_name, year = match.groups()
-    month = BULAN.get(month_name.lower())
+    month = _BULAN.get(month_name.lower())
     if not month:
         return None
-    return f"{year}-{month:02d}-{int(day):02d}"
+    try:
+        return date(int(year), month, int(day)).isoformat()
+    except ValueError:
+        return None

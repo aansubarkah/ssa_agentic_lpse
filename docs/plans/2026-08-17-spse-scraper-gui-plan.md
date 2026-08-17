@@ -228,6 +228,27 @@ def test_parse_rupiah_returns_none_when_unparseable():
     assert parse_rupiah("Lumsum") is None
 
 
+def test_parse_rupiah_pins_deliberate_edge_case_choices():
+    # None is treated like an absent value, not an error.
+    assert parse_rupiah(None) is None
+    # Thousands grouping with no decimals - a realistic Nilai PDN / Nilai UMK
+    # shape from the winner sub-tables.
+    assert parse_rupiah("1.000.000") == 1000000.0
+    # No space after the prefix.
+    assert parse_rupiah("Rp0,00") == 0.0
+    # We validate the character set, not the grouping grammar: tightening this
+    # to a strict '1.234.567,89' shape risks blanking real contract prices
+    # whose formatting we have never seen. So English-ordered separators and
+    # malformed grouping are silently misread rather than rejected. Neither
+    # appears in SPSE output; these assertions exist to make that a recorded
+    # decision instead of an accident.
+    assert parse_rupiah("12,345.67") == 12.34567
+    assert parse_rupiah("1.2.3") == 123.0
+    # The handwritten 'Rp 1.000.000,-' convention never appears in SPSE's
+    # machine-rendered output, so a trailing ',-' is rejected outright.
+    assert parse_rupiah("Rp 1.000.000,-") is None
+
+
 def test_parse_rupiah_rejects_non_money_values_seen_in_real_fixtures():
     # Every string below is a real cell value scraped from html_examples/.
     # Stripping non-digits made each one yield a bogus float, e.g.
@@ -249,6 +270,19 @@ def test_parse_tanggal_indonesian_month_names():
 def test_parse_tanggal_returns_none_when_unparseable():
     assert parse_tanggal("") is None
     assert parse_tanggal("Paket Sudah Selesai") is None
+
+
+def test_parse_tanggal_rejects_impossible_calendar_dates():
+    # A blank is recoverable downstream; a string that looks like an ISO date
+    # but is not one silently coerces or hard-fails when it reaches a
+    # spreadsheet or a DATE column.
+    assert parse_tanggal("31 Februari 2026") is None
+    assert parse_tanggal("0 Agustus 2026") is None
+
+
+def test_parse_tanggal_accepts_lowercase_month_names():
+    # The month lookup lower()s its key; nothing else exercises that.
+    assert parse_tanggal("11 agustus 2026") == "2026-08-11"
 ```
 
 **Step 2: Run to verify failure**
@@ -270,6 +304,7 @@ from __future__ import annotations
 
 import re
 import sys
+from datetime import date
 
 
 if sys.platform == "win32":
@@ -288,7 +323,7 @@ if sys.platform == "win32":
                 pass
     del _stream, _reconfigure
 
-BULAN = {
+_BULAN = {
     "januari": 1, "februari": 2, "maret": 3, "april": 4, "mei": 5, "juni": 6,
     "juli": 7, "agustus": 8, "september": 9, "oktober": 10, "november": 11,
     "desember": 12,
@@ -305,14 +340,24 @@ _RUPIAH_RE = re.compile(r"^(?:Rp\.?\s*)?([\d.,]+)$", re.IGNORECASE)
 
 
 def clean_text(value: str | None) -> str:
-    """Collapse whitespace and non-breaking spaces into single spaces."""
+    """Collapse runs of whitespace to one space and strip the ends.
+
+    None and every other falsy input become "", so callers can treat a missing
+    cell and an empty cell alike.
+    """
     if not value:
         return ""
+    # \s already covers \xa0, but SPSE values are littered with literal &nbsp;
+    # so the replace stays as documentation of the intent.
     return _WS_RE.sub(" ", value.replace("\xa0", " ")).strip()
 
 
 def parse_rupiah(value: str | None) -> float | None:
-    """'Rp. 787.406.000,00' -> 787406000.0; None when not a currency string."""
+    """'Rp. 787.406.000,00' -> 787406000.0; None when not a currency string.
+
+    The 'Rp' prefix is optional, so a bare '1.000.000,00' also parses; see
+    _RUPIAH_RE for why. Anything else -- 'APBN 2026', 'Lumsum', '-' -- is None.
+    """
     match = _RUPIAH_RE.match(clean_text(value))
     if not match:
         return None
@@ -328,21 +373,28 @@ def parse_rupiah(value: str | None) -> float | None:
 
 
 def parse_tanggal(value: str | None) -> str | None:
-    """'11 Agustus 2026' -> '2026-08-11'; None when not a date."""
+    """'11 Agustus 2026' -> '2026-08-11'; None when not a real date.
+
+    Impossible dates such as '31 Februari 2026' are rejected rather than
+    formatted: a blank is recoverable downstream, a fake ISO date is not.
+    """
     match = _TANGGAL_RE.match(clean_text(value))
     if not match:
         return None
     day, month_name, year = match.groups()
-    month = BULAN.get(month_name.lower())
+    month = _BULAN.get(month_name.lower())
     if not month:
         return None
-    return f"{year}-{month:02d}-{int(day):02d}"
+    try:
+        return date(int(year), month, int(day)).isoformat()
+    except ValueError:
+        return None
 ```
 
 **Step 4: Run to verify pass**
 
 Run: `uv run pytest tests/test_clean.py -v`
-Expected: 8 passed.
+Expected: 11 passed.
 
 **Step 5: Commit**
 
@@ -2047,10 +2099,16 @@ def build_rows(detail: dict, slug: str, nama_instansi: str, kategori: str,
         rows.append(dict(base_row))
 
     for row in rows:
+        # 'None if unparseable, otherwise the value' -- not `or ""`, which
+        # would turn a legitimate 0.0 into a blank. 'Rp. 0,00' is 4 of the 7
+        # distinct money values in the fixtures, so `or ""` would report
+        # 'realisasi is zero' as 'realisasi is unknown'.
         for column in MONEY_COLUMNS:
-            row[f"{column}_num"] = parse_rupiah(row.get(column)) or ""
+            nilai = parse_rupiah(row.get(column))
+            row[f"{column}_num"] = "" if nilai is None else nilai
         for column in DATE_COLUMNS:
-            row[f"{column}_iso"] = parse_tanggal(row.get(column)) or ""
+            tanggal = parse_tanggal(row.get(column))
+            row[f"{column}_iso"] = "" if tanggal is None else tanggal
         row["extra_json"] = json.dumps(extra, ensure_ascii=False) if extra else ""
     return rows
 ```
@@ -2733,8 +2791,12 @@ rows=list(csv.DictReader(open('output/kemkes/2025/kemkes_2025_tender.csv',encodi
 print(len(rows)); print({k:v for k,v in rows[0].items() if v})"`
 
 Expected: populated `nama_paket`, `satuan_kerja`, `pagu`, `pagu_num`. If
-`pagu_num` is blank while `pagu` has a value, `parse_rupiah` has a bug — fix it
-and add a test for the failing string.
+`pagu_num` is blank while `pagu` holds a non-zero amount, something is wrong —
+either `parse_rupiah` rejected a real currency format or `build_rows` collapsed
+the value; find out which, fix it, and add a test for the failing string. Note
+that a genuine `Rp. 0,00` correctly yields `0.0`, not a blank: `0.0` is data, so
+do not "fix" that by loosening `parse_rupiah`, which deliberately rejects
+non-money strings such as `APBN 2026`.
 
 **Step 6: Commit anything you fixed**
 

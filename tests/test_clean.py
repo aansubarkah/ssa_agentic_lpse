@@ -32,6 +32,27 @@ def test_parse_rupiah_returns_none_when_unparseable():
     assert parse_rupiah("Lumsum") is None
 
 
+def test_parse_rupiah_pins_deliberate_edge_case_choices():
+    # None is treated like an absent value, not an error.
+    assert parse_rupiah(None) is None
+    # Thousands grouping with no decimals - a realistic Nilai PDN / Nilai UMK
+    # shape from the winner sub-tables.
+    assert parse_rupiah("1.000.000") == 1000000.0
+    # No space after the prefix.
+    assert parse_rupiah("Rp0,00") == 0.0
+    # We validate the character set, not the grouping grammar: tightening this
+    # to a strict '1.234.567,89' shape risks blanking real contract prices
+    # whose formatting we have never seen. So English-ordered separators and
+    # malformed grouping are silently misread rather than rejected. Neither
+    # appears in SPSE output; these assertions exist to make that a recorded
+    # decision instead of an accident.
+    assert parse_rupiah("12,345.67") == 12.34567
+    assert parse_rupiah("1.2.3") == 123.0
+    # The handwritten 'Rp 1.000.000,-' convention never appears in SPSE's
+    # machine-rendered output, so a trailing ',-' is rejected outright.
+    assert parse_rupiah("Rp 1.000.000,-") is None
+
+
 def test_parse_rupiah_rejects_non_money_values_seen_in_real_fixtures():
     # Every string below is a real cell value scraped from html_examples/.
     # Stripping non-digits made each one yield a bogus float, e.g.
@@ -53,3 +74,16 @@ def test_parse_tanggal_indonesian_month_names():
 def test_parse_tanggal_returns_none_when_unparseable():
     assert parse_tanggal("") is None
     assert parse_tanggal("Paket Sudah Selesai") is None
+
+
+def test_parse_tanggal_rejects_impossible_calendar_dates():
+    # A blank is recoverable downstream; a string that looks like an ISO date
+    # but is not one silently coerces or hard-fails when it reaches a
+    # spreadsheet or a DATE column.
+    assert parse_tanggal("31 Februari 2026") is None
+    assert parse_tanggal("0 Agustus 2026") is None
+
+
+def test_parse_tanggal_accepts_lowercase_month_names():
+    # The month lookup lower()s its key; nothing else exercises that.
+    assert parse_tanggal("11 agustus 2026") == "2026-08-11"
