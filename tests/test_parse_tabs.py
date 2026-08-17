@@ -78,11 +78,23 @@ def test_anchor_without_nav_link_class_is_skipped():
     assert find_tabs('<a class="navbar-brand" href="https://x/a">X</a>') == []
 
 
-def test_fragment_and_relative_hrefs_are_skipped():
+def test_fragment_hrefs_are_skipped():
     # A Bootstrap-style in-page tab would become the filename 'index.html' for
     # every such tab, so it is dropped rather than fetched.
     assert find_tabs('<a class="nav-link" href="#tab-jadwal">Jadwal</a>') == []
-    assert find_tabs('<a class="nav-link" href="/kemkes/x">Jadwal</a>') == []
+
+
+def test_bare_relative_hrefs_are_skipped():
+    # Without a leading '/' the href cannot be resolved against the origin.
+    assert find_tabs('<a class="nav-link" href="peserta">Peserta</a>') == []
+
+
+def test_site_root_relative_hrefs_are_accepted():
+    # The live site renders its nav links as site-root-relative paths rather
+    # than the absolute URLs the saved fixtures carry. They must be captured;
+    # the caller resolves them with urljoin.
+    tabs = find_tabs('<a class="nav-link" href="/kemkes/lelang/1/peserta">Peserta</a>')
+    assert tabs == [{"url": "/kemkes/lelang/1/peserta", "label": "Peserta", "active": False}]
 
 
 def test_entities_in_labels_are_decoded():

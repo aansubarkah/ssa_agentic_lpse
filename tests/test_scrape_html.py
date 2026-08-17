@@ -74,3 +74,31 @@ def test_missing_entry_tab_returns_zero(tmp_path):
         fetch=lambda *a, **k: None, log=lambda *a: None,
     )
     assert count == 0
+
+
+def test_resolves_site_root_relative_tab_hrefs(tmp_path):
+    # The live site renders its nav links as relative paths ('/kemkes/...');
+    # the fetcher must resolve them against the origin before requesting.
+    entry = (
+        '<div class="content">'
+        '<ul class="nav-tabs">'
+        '<a class="nav-link active" href="/kemkes/lelang/1/pengumumanlelang">Pengumuman</a>'
+        '<a class="nav-link" href="/kemkes/lelang/1/peserta">Peserta</a>'
+        "</ul></div>"
+    )
+    fetched = []
+
+    def fake_fetch(session, url, referer, **kwargs):
+        fetched.append(url)
+        return entry
+
+    count = scrape_package_html(
+        None, "https://spse.inaproc.id/kemkes", "tender", "1", tmp_path,
+        referer="https://spse.inaproc.id/kemkes/lelang?tahun=2025",
+        fetch=fake_fetch, log=lambda *a: None,
+    )
+    assert fetched[0] == "https://spse.inaproc.id/kemkes/lelang/1/pengumumanlelang"
+    assert "https://spse.inaproc.id/kemkes/lelang/1/peserta" in fetched
+    assert (tmp_path / "1" / "pengumumanlelang.html").exists()
+    assert (tmp_path / "1" / "peserta.html").exists()
+    assert count == 2

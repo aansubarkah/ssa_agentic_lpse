@@ -18,6 +18,7 @@ from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import TypedDict
+from urllib.parse import urljoin
 from urllib.parse import urlparse
 from urllib.parse import urlparse as _urlparse
 
@@ -192,11 +193,16 @@ class _TabParser(HTMLParser):
         # An attribute present but valueless parses as None, hence the `or ""`.
         classes = (attr.get("class") or "").split()
         href = attr.get("href") or ""
-        # Reject relative and fragment hrefs ('#tab-jadwal'): the caller turns
-        # this URL into both a request and a filename, and '#tab-jadwal' would
-        # yield a malformed request plus the filename 'index.html' for every
-        # such tab. Dropping an unfetchable tab beats emitting a colliding one.
-        if "nav-link" not in classes or not href.startswith(("http://", "https://")):
+        # Accept absolute http(s) and site-root-relative ('/kemkes/...') hrefs:
+        # the live site renders relative tab links while the saved fixtures use
+        # absolute ones. Reject fragments ('#tab-jadwal') and bare-relative
+        # ('peserta') hrefs: a fragment would yield the colliding filename
+        # 'index.html' for every such tab, and a bare-relative one cannot be
+        # resolved against the origin. Dropping an unresolvable tab beats
+        # emitting a colliding one.
+        if "nav-link" not in classes:
+            return
+        if not (href.startswith(("http://", "https://")) or href.startswith("/")):
             return
         # Flush rather than overwrite: markup missing a '</a>' would otherwise
         # discard the tab already open, silently costing a whole tab download.
@@ -218,7 +224,9 @@ def find_tabs(html_text: str) -> list[Tab]:
     SPSE renders absolute hrefs here, and the set varies per package (an
     unawarded tender has no evaluasi tabs), so this is the authority on which
     tabs to fetch rather than a hardcoded table. Every returned 'url' is an
-    absolute http(s) URL; anything else in the markup is skipped.
+    absolute http(s) URL or a site-root-relative path ('/kemkes/lelang/1/...')
+    that the caller must resolve against the origin before fetching; anything
+    else in the markup (fragments, bare-relative links) is skipped.
 
     An empty list always means "this is not a detail page" -- the fetch failed,
     returned an error page, or hit a login redirect. It never means "a package
@@ -790,10 +798,14 @@ def scrape_package_html(session, base: str, kategori: str, paket_id: str,
         # so the package reads as suspicious, not silently complete.
         log(f"    {entry_url}: tidak ada tab (bukan halaman detail?)")
     for tab in tabs:
-        path = target / tab_filename(tab["url"])
+        # The live site's nav links are site-root-relative ('/kemkes/...'),
+        # so resolve each against the origin before fetching. urljoin is a
+        # no-op for the absolute hrefs the saved fixtures carry.
+        tab_url = urljoin(base, tab["url"])
+        path = target / tab_filename(tab_url)
         if _is_complete(path):
             continue
-        html_text = fetch(session, tab["url"], referer=referer, log=log)
+        html_text = fetch(session, tab_url, referer=referer, log=log)
         if html_text is None:
             continue                      # tab this package legitimately lacks
         target.mkdir(parents=True, exist_ok=True)
