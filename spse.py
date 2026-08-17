@@ -1092,7 +1092,151 @@ def run_pipeline(agency: dict, kategori: str, tahun: int,
 
 
 def launch_gui() -> None:
-    raise NotImplementedError("GUI arrives in the next task")
+    """Open the desktop window. All Tk access stays on the main thread."""
+    import queue
+    import threading
+    import tkinter as tk
+    from tkinter import ttk
+
+    agencies = load_agencies()
+    labels = [f"{a['slug']} - {a['names'][0] if a['names'] else ''}" for a in agencies]
+    by_label = dict(zip(labels, agencies))
+
+    root = tk.Tk()
+    root.title("SPSE Scraper")
+    root.geometry("640x620")
+
+    messages: queue.Queue = queue.Queue()
+    cancel = threading.Event()
+    worker: dict[str, threading.Thread | None] = {"thread": None}
+
+    frame = ttk.Frame(root, padding=10)
+    frame.pack(fill="both", expand=True)
+
+    ttk.Label(frame, text="Instansi").grid(row=0, column=0, sticky="w")
+    agency_var = tk.StringVar()
+    agency_box = ttk.Combobox(frame, textvariable=agency_var, values=labels, width=60)
+    agency_box.grid(row=0, column=1, columnspan=3, sticky="we", pady=2)
+
+    def filter_agencies(_event=None) -> None:
+        """Typeahead: 734 entries are unusable without filtering."""
+        needle = agency_var.get().lower()
+        agency_box["values"] = [l for l in labels if needle in l.lower()] or labels
+
+    agency_box.bind("<KeyRelease>", filter_agencies)
+
+    ttk.Label(frame, text="Tipe").grid(row=1, column=0, sticky="w")
+    tipe_var = tk.StringVar(value="tender")
+    ttk.Combobox(frame, textvariable=tipe_var, values=sorted(CATEGORIES),
+                 state="readonly", width=24).grid(row=1, column=1, sticky="w", pady=2)
+
+    ttk.Label(frame, text="Tahun").grid(row=1, column=2, sticky="e")
+    tahun_var = tk.StringVar(value=str(date.today().year))
+    years = [str(y) for y in range(date.today().year, 2010, -1)]
+    ttk.Combobox(frame, textvariable=tahun_var, values=years, width=8
+                 ).grid(row=1, column=3, sticky="w", pady=2)
+
+    ttk.Label(frame, text="Workers").grid(row=2, column=0, sticky="w")
+    workers_var = tk.StringVar(value=str(DEFAULT_WORKERS))
+    ttk.Spinbox(frame, from_=1, to=32, textvariable=workers_var, width=6
+                ).grid(row=2, column=1, sticky="w", pady=2)
+
+    excel_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(frame, text="Excel juga", variable=excel_var
+                    ).grid(row=2, column=2, columnspan=2, sticky="w")
+
+    phase_json = tk.BooleanVar(value=True)
+    phase_html = tk.BooleanVar(value=True)
+    phase_csv = tk.BooleanVar(value=True)
+    phases = ttk.Frame(frame)
+    phases.grid(row=3, column=0, columnspan=4, sticky="w", pady=(6, 2))
+    ttk.Label(phases, text="Fase:").pack(side="left")
+    for text, var in (("JSON", phase_json), ("HTML", phase_html), ("CSV", phase_csv)):
+        ttk.Checkbutton(phases, text=text, variable=var).pack(side="left", padx=4)
+
+    buttons = ttk.Frame(frame)
+    buttons.grid(row=4, column=0, columnspan=4, sticky="w", pady=6)
+
+    progress_var = tk.DoubleVar(value=0)
+    progress = ttk.Progressbar(frame, variable=progress_var, maximum=100)
+    progress.grid(row=5, column=0, columnspan=4, sticky="we", pady=4)
+    status_var = tk.StringVar(value="Siap")
+    ttk.Label(frame, textvariable=status_var).grid(row=6, column=0, columnspan=4,
+                                                  sticky="w")
+
+    log_box = tk.Text(frame, height=20, wrap="none", font=("Consolas", 9))
+    log_box.grid(row=7, column=0, columnspan=4, sticky="nsew", pady=(6, 0))
+    frame.rowconfigure(7, weight=1)
+    frame.columnconfigure(1, weight=1)
+
+    def emit(message: str) -> None:
+        messages.put(("log", message))
+
+    def emit_progress(done: int, total: int) -> None:
+        messages.put(("progress", done, total))
+
+    def start() -> None:
+        agency = by_label.get(agency_var.get()) or match_agency(agencies, agency_var.get())
+        if agency is None:
+            emit("Pilih instansi dulu.")
+            return
+        if worker["thread"] and worker["thread"].is_alive():
+            emit("Masih berjalan.")
+            return
+        cancel.clear()
+        progress_var.set(0)
+        status_var.set("Berjalan...")
+
+        def job() -> None:
+            try:
+                run_pipeline(
+                    agency, tipe_var.get(), resolve_tahun(int(tahun_var.get() or 0)),
+                    do_json=phase_json.get(), do_html=phase_html.get(),
+                    do_csv=phase_csv.get(), workers=int(workers_var.get()),
+                    excel=excel_var.get(), cancel=cancel,
+                    progress=emit_progress, log=emit,
+                )
+                messages.put(("done", "Selesai"))
+            except Exception as err:
+                messages.put(("done", f"Gagal: {type(err).__name__}: {err}"))
+
+        worker["thread"] = threading.Thread(target=job, daemon=True)
+        worker["thread"].start()
+
+    def stop() -> None:
+        cancel.set()
+        status_var.set("Membatalkan... (file yang sudah selesai tetap tersimpan)")
+
+    def close() -> None:
+        cancel.set()
+        root.after(200, root.destroy)
+
+    ttk.Button(buttons, text="Mulai", command=start).pack(side="left")
+    ttk.Button(buttons, text="Batal", command=stop).pack(side="left", padx=4)
+    ttk.Button(buttons, text="Tutup", command=close).pack(side="left")
+    root.protocol("WM_DELETE_WINDOW", close)
+
+    def pump() -> None:
+        """Drain the worker's queue on the main thread, 10 times a second."""
+        while True:
+            try:
+                message = messages.get_nowait()
+            except queue.Empty:
+                break
+            if message[0] == "log":
+                log_box.insert("end", str(message[1]) + "\n")
+                log_box.see("end")
+            elif message[0] == "progress":
+                done, total = message[1], message[2]
+                progress_var.set(100 * done / total if total else 0)
+                status_var.set(f"{done}/{total} paket")
+            elif message[0] == "done":
+                status_var.set(str(message[1]))
+                progress_var.set(100)
+        root.after(100, pump)
+
+    root.after(100, pump)
+    root.mainloop()
 
 
 def resolve_tahun(value: int | None) -> int:
