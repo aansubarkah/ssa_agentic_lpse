@@ -7,11 +7,14 @@ docs/plans/2026-08-17-spse-scraper-gui-design.md for the design rationale.
 
 from __future__ import annotations
 
+import csv
 import re
 import sys
 from datetime import date
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import TypedDict
+from urllib.parse import urlparse
 
 
 if sys.platform == "win32":
@@ -459,3 +462,65 @@ def listing_url(base: str, kategori: str, tahun: int) -> str:
 def entry_tab_url(base: str, kategori: str, paket_id: str) -> str:
     """First tab to fetch; its nav bar reveals the package's remaining tabs."""
     return base + CATEGORIES[kategori]["entry_tab"].format(id=paket_id)
+
+
+AGENCY_CSV = "output/all_lpse_urls.csv"
+
+
+def slug_from_url(url: str) -> str:
+    """'https://spse.inaproc.id/kemkes' -> 'kemkes'."""
+    return urlparse(url.strip().rstrip("/")).path.strip("/").split("/")[-1]
+
+
+def load_agencies(csv_path: str | Path = AGENCY_CSV) -> list[dict]:
+    """Load the agency list, grouped by LPSE slug.
+
+    Many kementerian/lembaga share one LPSE instance, so the CSV holds several
+    rows per slug. Grouping keeps the dropdown and the output tree keyed by the
+    thing that actually varies: the slug.
+    """
+    grouped: dict[str, dict] = {}
+    with open(csv_path, encoding="utf-8-sig", newline="") as handle:
+        for row in csv.DictReader(handle):
+            url = (row.get("url") or "").strip()
+            name = clean_text(row.get("name"))
+            if not url:
+                continue
+            slug = slug_from_url(url)
+            if not slug:
+                continue
+            entry = grouped.setdefault(
+                slug, {"slug": slug, "base": url.rstrip("/"), "names": []}
+            )
+            if name and name not in entry["names"]:
+                entry["names"].append(name)
+    return sorted(grouped.values(), key=lambda a: a["slug"])
+
+
+def match_agency(agencies: list[dict], query: str) -> dict | None:
+    """Resolve a slug or a free-text agency name to one agency.
+
+    Exact slug wins, then substring over slug and names, then token overlap.
+    Returns None rather than guessing when nothing matches.
+    """
+    needle = clean_text(query).lower()
+    if not needle:
+        return None
+    for agency in agencies:
+        if agency["slug"] == needle:
+            return agency
+    for agency in agencies:
+        haystack = " ".join([agency["slug"]] + agency["names"]).lower()
+        if needle in haystack:
+            return agency
+    tokens = [t for t in re.split(r"\W+", needle) if len(t) > 2]
+    best, best_score = None, 0
+    for agency in agencies:
+        haystack = " ".join([agency["slug"]] + agency["names"]).lower()
+        score = sum(1 for token in tokens if token in haystack)
+        if score > best_score:
+            best, best_score = agency, score
+    # All query tokens must match; a partial overlap (e.g. 'kementerian
+    # antariksa' -> pertanian via 'kementerian') is a guess, and the docstring
+    # promises None rather than guessing.
+    return best if best_score == len(tokens) else None
