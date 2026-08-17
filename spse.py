@@ -1027,3 +1027,64 @@ def export_excel(csv_path: Path, log=print) -> Path | None:
     workbook.save(xlsx_path)
     log(f"Excel: {xlsx_path}")
     return xlsx_path
+
+
+OUTPUT_ROOT = Path("output")
+
+
+def run_dir(slug: str, tahun: int, kategori: str, root: Path = OUTPUT_ROOT) -> Path:
+    """output/<slug>/<tahun>/<kategori>/ — the folder one run owns."""
+    return Path(root) / slug / str(tahun) / kategori
+
+
+def run_pipeline(agency: dict, kategori: str, tahun: int,
+                 do_json: bool = True, do_html: bool = True, do_csv: bool = True,
+                 workers: int = DEFAULT_WORKERS, excel: bool = False,
+                 limit: int = 0, root: Path = OUTPUT_ROOT,
+                 cancel=None, progress=None, log=print) -> dict:
+    """Run the four phases for one agency, category and year.
+
+    Each phase is skippable and resumable, so a cancelled run continues from
+    what is already on disk.
+    """
+    base, slug = agency["base"], agency["slug"]
+    nama = agency["names"][0] if agency["names"] else slug
+    out_dir = run_dir(slug, tahun, kategori, root)
+    html_dir = out_dir / "html"
+    cfg = CATEGORIES[kategori]
+
+    log(f"=== {cfg['label']} | {slug} | {tahun} ===")
+    rows: list = []
+    if do_json:
+        rows = scrape_json(base, slug, kategori, tahun, out_dir, log=log)
+    else:
+        cache = out_dir / "list.json"
+        if cache.exists():
+            rows = json.loads(cache.read_text(encoding="utf-8"))["data"]
+            log(f"Memakai {len(rows)} baris dari list.json")
+
+    if not cfg["accepts_tahun"] and rows:
+        before = len(rows)
+        rows = filter_rows_by_year(rows, tahun)
+        log(f"Filter tahun {tahun}: {before} -> {len(rows)} baris")
+
+    ids = extract_ids(rows, kategori)
+    if limit:
+        ids = ids[:limit]
+    log(f"{len(ids)} paket")
+
+    stats = {"paket": len(ids), "files": 0, "csv_rows": 0}
+    if do_html and ids:
+        html_stats = scrape_html(base, kategori, tahun, ids, html_dir,
+                                 workers=workers, cancel=cancel,
+                                 progress=progress, log=log)
+        stats["files"] = html_stats["files"]
+
+    if do_csv and html_dir.exists():
+        csv_path = out_dir.parent / f"{slug}_{tahun}_{kategori}.csv"
+        stats["csv_rows"] = export_csv(html_dir, csv_path, slug=slug,
+                                       nama_instansi=nama, kategori=kategori,
+                                       tahun=tahun, base=base, log=log)
+        if excel:
+            export_excel(csv_path, log=log)
+    return stats
