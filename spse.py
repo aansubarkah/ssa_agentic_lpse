@@ -449,6 +449,32 @@ CATEGORIES: dict[str, dict] = {
 }
 
 
+def build_dt_body(token: str, kategori: str, start: int, length: int) -> str:
+    """Build the DataTables server-side POST body for one page of results."""
+    cfg = CATEGORIES[kategori]
+    parts: list[str] = []
+
+    def add(key: str, value: str = "") -> None:
+        parts.append(f"{key}={value}")
+
+    add("draw", "1")
+    for index in range(cfg["columns"]):
+        add(f"columns[{index}][data]", str(index))
+        add(f"columns[{index}][name]")
+        add(f"columns[{index}][searchable]", "true")
+        add(f"columns[{index}][orderable]", "true")
+        add(f"columns[{index}][search][value]")
+        add(f"columns[{index}][search][regex]", "false")
+    add("order[0][column]", str(cfg["order_column"]))
+    add("order[0][dir]", "desc")
+    add("start", str(start))
+    add("length", str(length))
+    add("search[value]")
+    add("search[regex]", "false")
+    add("authenticityToken", token)
+    return "&".join(parts)
+
+
 def list_api_url(base: str, kategori: str, tahun: int) -> str:
     """URL of the DataTables endpoint for one category."""
     cfg = CATEGORIES[kategori]
