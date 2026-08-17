@@ -80,18 +80,33 @@ Tests assert on specific values taken from the fixtures above, not on shapes:
 - Modify: `pyproject.toml`
 - Create: `tests/__init__.py` (empty)
 - Create: `tests/conftest.py`
+- Create: `tests/test_fixtures.py`
 
-**Step 1: Add pytest as a dev dependency**
+**Step 1: Add pytest as a dev dependency and put the repo root on `sys.path`**
 
 In `pyproject.toml`, add:
 
 ```toml
 [dependency-groups]
 dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
 ```
 
 Run: `uv sync --group dev`
 Expected: pytest installed.
+
+`pythonpath = ["."]` is load-bearing, not cosmetic. The project has no
+`[build-system]`, so `uv` treats it as a virtual project and never installs it
+into the venv. Every later task imports the module under test as
+`from spse import ...`, and that only resolves because this setting puts the repo
+root on `sys.path`. Without it the suite fails with
+`ModuleNotFoundError: No module named 'spse'`. Do not rely on `tests/__init__.py`
+for this instead: pytest's `prepend` import mode does happen to insert the repo
+root when `tests/` is a package, but that makes an apparently-empty boilerplate
+file load-bearing and is far too easy to delete by accident.
 
 **Step 2: Create the fixture helper**
 
@@ -132,14 +147,29 @@ def load_fixture():
 Create `tests/test_fixtures.py`:
 
 ```python
-def test_all_fixtures_load(load_fixture):
-    for name in ["tender_pemenang", "tender_peserta", "nontender_pengumuman",
-                 "pencatatan_pengumuman", "swakelola_pelaksana", "darurat_pemenang"]:
-        assert "nav-tabs" in load_fixture(name)
+import pytest
+
+FIXTURE_NAMES = [
+    "tender_pemenang",
+    "tender_peserta",
+    "nontender_pengumuman",
+    "pencatatan_pengumuman",
+    "swakelola_pelaksana",
+    "darurat_pemenang",
+]
+
+
+@pytest.mark.parametrize("name", FIXTURE_NAMES)
+def test_fixture_loads(load_fixture, name):
+    assert "nav-tabs" in load_fixture(name)
 ```
 
+Parametrize rather than looping inside one test: each fixture gets its own test ID,
+so a broken or missing page is named in the output instead of aborting the whole
+check at the first failure.
+
 Run: `uv run pytest tests/test_fixtures.py -v`
-Expected: PASS.
+Expected: 6 passed, one per fixture.
 
 **Step 4: Commit**
 
