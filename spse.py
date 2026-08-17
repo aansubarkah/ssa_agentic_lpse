@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 import sys
 from datetime import date
+from html.parser import HTMLParser
 
 
 if sys.platform == "win32":
@@ -94,3 +95,52 @@ def parse_tanggal(value: str | None) -> str | None:
         return date(int(year), month, int(day)).isoformat()
     except ValueError:
         return None
+
+
+class _TabParser(HTMLParser):
+    """Collect the `a.nav-link` entries of the detail-page tab bar.
+
+    The class attribute is matched token-wise, not by substring: SPSE writes it
+    with irregular internal whitespace ('nav-link  active ') and 'active' is
+    absent on inactive tabs.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.tabs: list[dict] = []
+        self._current: dict | None = None
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        if tag != "a":
+            return
+        attr = dict(attrs)
+        classes = (attr.get("class") or "").split()
+        if "nav-link" not in classes or not attr.get("href"):
+            return
+        self._current = {
+            "url": attr["href"],
+            "active": "active" in classes,
+            "label": "",
+        }
+
+    def handle_data(self, data: str) -> None:
+        if self._current is not None:
+            self._current["label"] += data
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a" and self._current is not None:
+            self._current["label"] = clean_text(self._current["label"])
+            self.tabs.append(self._current)
+            self._current = None
+
+
+def find_tabs(html_text: str) -> list[dict]:
+    """Return this package's real tabs: [{'url', 'label', 'active'}, ...].
+
+    SPSE renders absolute hrefs here, and the set varies per package (an
+    unawarded tender has no evaluasi tabs), so this is the authority on which
+    tabs to fetch rather than a hardcoded table.
+    """
+    parser = _TabParser()
+    parser.feed(html_text)
+    return parser.tabs
