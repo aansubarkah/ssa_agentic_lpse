@@ -1,6 +1,6 @@
 # SPSE Scraper & CSV Exporter
 
-Scraper otomatis untuk mengumpulkan data pengadaan (procurement) dari portal SPSE — bekerja untuk **agency & tahun apapun**, sekaligus export ke CSV pipe-delimited.
+Scraper otomatis untuk mengumpulkan data pengadaan (procurement) dari portal SPSE — bekerja untuk **Kementerian/Lembaga/Pemerintah Daerah & tahun apapun**, sekaligus export ke CSV pipe-delimited.
 
 > **SPSE** = Sistem Pengadaan Secara Elektronik — platform e-procurement pemerintah Indonesia (Phoenix/Elixir).
 
