@@ -18,6 +18,11 @@ node_modules/
 # Scrape output
 output/
 
+# Root-level input list (never ignore)
+!/all_lpse_urls.csv
+
+html_examples/
+
 # Excel
 *.xlsx
 

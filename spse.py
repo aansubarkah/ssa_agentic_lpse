@@ -999,17 +999,27 @@ def merge_package_detail(package_dir: Path) -> dict | None:
 
 
 def export_csv(packages_dir: Path, out_path: Path, slug: str, nama_instansi: str,
-               kategori: str, tahun: int, base: str, log=print) -> int:
-    """Phase 4. Walk saved HTML, parse, and write the combined CSV."""
+               kategori: str, tahun: int, base: str, log=print,
+               progress=None) -> int:
+    """Phase 4. Walk saved HTML, parse, and write the combined CSV.
+
+    progress(done, total) receives the count of package folders processed;
+    every 100th package also gets a log line so long exports stay visibly
+    alive.
+    """
+    dirs = sorted(p for p in packages_dir.iterdir() if p.is_dir())
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    log(f"CSV: memproses {len(dirs)} paket -> {out_path}")
     written = 0
     with open(out_path, "w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=CSV_COLUMNS, delimiter="|",
                                 extrasaction="ignore")
         writer.writeheader()
-        for package_dir in sorted(p for p in packages_dir.iterdir() if p.is_dir()):
+        for done, package_dir in enumerate(dirs, start=1):
             detail = merge_package_detail(package_dir)
             if detail is None:
+                if progress:
+                    progress(done, len(dirs))
                 continue
             rows = build_rows(
                 detail, slug=slug, nama_instansi=nama_instansi, kategori=kategori,
@@ -1019,23 +1029,45 @@ def export_csv(packages_dir: Path, out_path: Path, slug: str, nama_instansi: str
             for row in rows:
                 writer.writerow(row)
                 written += 1
+            if progress:
+                progress(done, len(dirs))
+            if done % 100 == 0:
+                log(f"CSV: {done}/{len(dirs)} paket, {written} baris")
     log(f"CSV: {written} baris -> {out_path}")
     return written
 
 
-def export_excel(csv_path: Path, log=print) -> Path | None:
+def export_excel(csv_path: Path, log=print, progress=None) -> Path | None:
     """Convert the CSV to .xlsx. openpyxl is imported here so the normal path
-    keeps requests as the only dependency."""
+    keeps requests as the only dependency.
+
+    progress(done, total) receives the number of CSV rows appended so the GUI
+    bar keeps moving during the conversion; every 10_000th row also logs.
+    """
     try:
         from openpyxl import Workbook
     except ImportError:
         log("openpyxl belum terpasang; lewati Excel (uv add openpyxl)")
         return None
+    try:
+        total = sum(1 for _ in open(csv_path, encoding="utf-8-sig", newline=""))
+    except OSError as err:
+        log(f"Excel: tidak bisa membaca {csv_path}: {err}")
+        return None
+    log(f"Excel: {total} baris CSV -> xlsx")
     workbook = Workbook()
     sheet = workbook.active
+    done = 0
     with open(csv_path, encoding="utf-8-sig", newline="") as handle:
         for row in csv.reader(handle, delimiter="|"):
             sheet.append(row)
+            done += 1
+            # Throttle mid-run updates but always report the last row so the
+            # bar completes even for small files.
+            if progress and (done == total or done % 500 == 0):
+                progress(done, total)
+            if done % 10_000 == 0:
+                log(f"Excel: {done}/{total} baris")
     xlsx_path = csv_path.with_suffix(".xlsx")
     workbook.save(xlsx_path)
     log(f"Excel: {xlsx_path}")
@@ -1095,11 +1127,16 @@ def run_pipeline(agency: dict, kategori: str, tahun: int,
 
     if do_csv and html_dir.exists():
         csv_path = out_dir.parent / f"{slug}_{tahun}_{kategori}.csv"
+        log("=== Fase 4: export CSV ===")
+        csv_progress = (lambda done, total: progress(done, total, "paket CSV"))
+        excel_progress = (lambda done, total: progress(done, total, "baris Excel"))
         stats["csv_rows"] = export_csv(html_dir, csv_path, slug=slug,
                                        nama_instansi=nama, kategori=kategori,
-                                       tahun=tahun, base=base, log=log)
+                                       tahun=tahun, base=base, log=log,
+                                       progress=csv_progress if progress else None)
         if excel:
-            export_excel(csv_path, log=log)
+            export_excel(csv_path, log=log,
+                         progress=excel_progress if progress else None)
     return stats
 
 
@@ -1184,8 +1221,8 @@ def launch_gui() -> None:
     def emit(message: str) -> None:
         messages.put(("log", message))
 
-    def emit_progress(done: int, total: int) -> None:
-        messages.put(("progress", done, total))
+    def emit_progress(done: int, total: int, label: str = "paket") -> None:
+        messages.put(("progress", done, total, label))
 
     def start() -> None:
         agency = by_label.get(agency_var.get()) or match_agency(agencies, agency_var.get())
@@ -1240,8 +1277,9 @@ def launch_gui() -> None:
                 log_box.see("end")
             elif message[0] == "progress":
                 done, total = message[1], message[2]
+                label = message[3] if len(message) > 3 else "paket"
                 progress_var.set(100 * done / total if total else 0)
-                status_var.set(f"{done}/{total} paket")
+                status_var.set(f"{label} {done}/{total}")
             elif message[0] == "done":
                 status_var.set(str(message[1]))
                 progress_var.set(100)
