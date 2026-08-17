@@ -416,6 +416,10 @@ git commit -m "feat: add value cleaners for text, rupiah and Indonesian dates"
 `tests/test_parse_tabs.py`:
 
 ```python
+"""Tab discovery: read a package's real detail tabs out of the nav bar."""
+
+import pytest
+
 from spse import find_tabs
 
 
@@ -449,6 +453,83 @@ def test_query_string_tab_urls_are_preserved(load_fixture):
 def test_swakelola_tab_labels(load_fixture):
     tabs = find_tabs(load_fixture("swakelola_pelaksana"))
     assert [t["label"] for t in tabs] == ["Pengumuman", "Pelaksana Swakelola"]
+
+
+# Every saved page, not just the five above: pins the tab count and the
+# invariants the rest of the pipeline relies on -- exactly one active tab, and
+# an absolute URL for every tab, since callers fetch these without rewriting.
+@pytest.mark.parametrize(
+    ("fixture", "expected_count"),
+    [
+        ("tender_pemenang", 5),
+        ("tender_peserta", 2),
+        ("nontender_pengumuman", 5),
+        ("pencatatan_pengumuman", 2),
+        ("swakelola_pelaksana", 2),
+        ("darurat_pemenang", 2),
+    ],
+)
+def test_every_fixture_yields_sane_tabs(load_fixture, fixture, expected_count):
+    tabs = find_tabs(load_fixture(fixture))
+    assert len(tabs) == expected_count
+    assert sum(1 for t in tabs if t["active"]) == 1
+    assert all(t["url"].startswith("https://") for t in tabs)
+    assert all(t["label"] for t in tabs)
+
+
+def test_class_attribute_is_matched_token_wise():
+    # SPSE really emits this irregular spacing; a substring test would also
+    # match a hypothetical 'nav-link-disabled' or 'inactive'.
+    html = '<a class="nav-link  active " href="https://x/a">Peserta</a>'
+    assert find_tabs(html) == [
+        {"url": "https://x/a", "label": "Peserta", "active": True}
+    ]
+
+
+def test_anchor_without_href_is_skipped():
+    assert find_tabs('<a class="nav-link">Peserta</a>') == []
+
+
+def test_anchor_without_nav_link_class_is_skipped():
+    # The page's navbar close button is a classless <a>; it must not be a tab.
+    assert find_tabs('<a href="https://x/a">Tutup</a>') == []
+    assert find_tabs('<a class="navbar-brand" href="https://x/a">X</a>') == []
+
+
+def test_fragment_and_relative_hrefs_are_skipped():
+    # A Bootstrap-style in-page tab would become the filename 'index.html' for
+    # every such tab, so it is dropped rather than fetched.
+    assert find_tabs('<a class="nav-link" href="#tab-jadwal">Jadwal</a>') == []
+    assert find_tabs('<a class="nav-link" href="/kemkes/x">Jadwal</a>') == []
+
+
+def test_entities_in_labels_are_decoded():
+    html = '<a class="nav-link" href="https://x/a">Pemenang &amp; Kontrak</a>'
+    assert find_tabs(html)[0]["label"] == "Pemenang & Kontrak"
+
+
+def test_nested_markup_in_a_label_is_flattened():
+    html = (
+        '<a class="nav-link" href="https://x/a">'
+        '<i class="fa fa-list"> </i> Hasil<br>  Evaluasi</a>'
+    )
+    assert find_tabs(html)[0]["label"] == "Hasil Evaluasi"
+
+
+def test_unterminated_anchor_does_not_discard_the_previous_tab():
+    # A missing '</a>' must not silently cost a whole tab download.
+    html = (
+        '<a class="nav-link" href="https://x/a">Pengumuman'
+        '<a class="nav-link" href="https://x/b">Peserta</a>'
+    )
+    assert [(t["url"], t["label"]) for t in find_tabs(html)] == [
+        ("https://x/a", "Pengumuman"),
+        ("https://x/b", "Peserta"),
+    ]
+
+
+def test_empty_input_yields_no_tabs():
+    assert find_tabs("") == []
 ```
 
 **Step 2: Run to verify failure**
@@ -463,46 +544,86 @@ tags carry unpredictable extra attributes (`<div class="content" style="...">`).
 
 ```python
 from html.parser import HTMLParser
+from typing import TypedDict
+
+
+class Tab(TypedDict):
+    """One entry of a detail page's tab bar.
+
+    A TypedDict rather than a dataclass or NamedTuple: later stages may enrich
+    these dicts with extra keys, and a typo like tab["urls"] is then a type
+    error at author time instead of a KeyError inside a worker thread.
+    """
+
+    url: str
+    label: str
+    active: bool
 
 
 class _TabParser(HTMLParser):
-    """Collect the `a.nav-link` entries of the detail-page tab bar."""
+    """Collect the `a.nav-link` entries of the detail-page tab bar.
+
+    The class attribute is matched token-wise, not by substring: SPSE writes it
+    with irregular internal whitespace ('nav-link  active ') and 'active' is
+    absent on inactive tabs. Only absolute http(s) hrefs are accepted, so
+    callers may fetch tab['url'] and derive a filename from it unconditionally.
+
+    An instance is single-use: reset() does not clear `tabs`, so feeding a
+    second document would append to the first one's results.
+    """
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.tabs: list[dict] = []
-        self._current: dict | None = None
+        self.tabs: list[Tab] = []
+        self._current: Tab | None = None
 
-    def handle_starttag(self, tag: str, attrs: list) -> None:
+    def _flush(self) -> None:
+        """Finish the open tab, if any, and append it to `tabs`."""
+        if self._current is None:
+            return
+        self._current["label"] = clean_text(self._current["label"])
+        self.tabs.append(self._current)
+        self._current = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag != "a":
             return
         attr = dict(attrs)
+        # An attribute present but valueless parses as None, hence the `or ""`.
         classes = (attr.get("class") or "").split()
-        if "nav-link" not in classes or not attr.get("href"):
+        href = attr.get("href") or ""
+        # Reject relative and fragment hrefs ('#tab-jadwal'): the caller turns
+        # this URL into both a request and a filename, and '#tab-jadwal' would
+        # yield a malformed request plus the filename 'index.html' for every
+        # such tab. Dropping an unfetchable tab beats emitting a colliding one.
+        if "nav-link" not in classes or not href.startswith(("http://", "https://")):
             return
-        self._current = {
-            "url": attr["href"],
-            "active": "active" in classes,
-            "label": "",
-        }
+        # Flush rather than overwrite: markup missing a '</a>' would otherwise
+        # discard the tab already open, silently costing a whole tab download.
+        self._flush()
+        self._current = {"url": href, "active": "active" in classes, "label": ""}
 
     def handle_data(self, data: str) -> None:
         if self._current is not None:
             self._current["label"] += data
 
     def handle_endtag(self, tag: str) -> None:
-        if tag == "a" and self._current is not None:
-            self._current["label"] = clean_text(self._current["label"])
-            self.tabs.append(self._current)
-            self._current = None
+        if tag == "a":
+            self._flush()
 
 
-def find_tabs(html_text: str) -> list[dict]:
+def find_tabs(html_text: str) -> list[Tab]:
     """Return this package's real tabs: [{'url', 'label', 'active'}, ...].
 
     SPSE renders absolute hrefs here, and the set varies per package (an
     unawarded tender has no evaluasi tabs), so this is the authority on which
-    tabs to fetch rather than a hardcoded table.
+    tabs to fetch rather than a hardcoded table. Every returned 'url' is an
+    absolute http(s) URL; anything else in the markup is skipped.
+
+    An empty list always means "this is not a detail page" -- the fetch failed,
+    returned an error page, or hit a login redirect. It never means "a package
+    with no tabs": every real detail page carries at least a Pengumuman tab.
+    Callers must treat [] as failure, not as an empty success.
     """
     parser = _TabParser()
     parser.feed(html_text)
@@ -512,7 +633,7 @@ def find_tabs(html_text: str) -> list[dict]:
 **Step 4: Run to verify pass**
 
 Run: `uv run pytest tests/test_parse_tabs.py -v`
-Expected: 5 passed.
+Expected: 19 passed.
 
 **Step 5: Commit**
 
@@ -1758,7 +1879,8 @@ def test_downloads_entry_tab_then_discovered_tabs(tmp_path, load_fixture):
         referer="https://x/kemkes/lelang?tahun=2025",
         fetch=fake_fetch, log=lambda *a: None,
     )
-    # Entry tab plus the two tabs its nav bar advertises, deduplicated.
+    # Entry tab plus the one further tab its nav bar advertises. Tabs are
+    # not deduplicated; the repeated write is skipped by _is_complete(path).
     assert fetched[0].endswith("/pengumumanlelang")
     assert count == 2
     assert (tmp_path / "10158661000" / "peserta.html").exists()

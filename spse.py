@@ -11,6 +11,7 @@ import re
 import sys
 from datetime import date
 from html.parser import HTMLParser
+from typing import TypedDict
 
 
 if sys.platform == "win32":
@@ -97,49 +98,83 @@ def parse_tanggal(value: str | None) -> str | None:
         return None
 
 
+class Tab(TypedDict):
+    """One entry of a detail page's tab bar.
+
+    A TypedDict rather than a dataclass or NamedTuple: later stages may enrich
+    these dicts with extra keys, and a typo like tab["urls"] is then a type
+    error at author time instead of a KeyError inside a worker thread.
+    """
+
+    url: str
+    label: str
+    active: bool
+
+
 class _TabParser(HTMLParser):
     """Collect the `a.nav-link` entries of the detail-page tab bar.
 
     The class attribute is matched token-wise, not by substring: SPSE writes it
     with irregular internal whitespace ('nav-link  active ') and 'active' is
-    absent on inactive tabs.
+    absent on inactive tabs. Only absolute http(s) hrefs are accepted, so
+    callers may fetch tab['url'] and derive a filename from it unconditionally.
+
+    An instance is single-use: reset() does not clear `tabs`, so feeding a
+    second document would append to the first one's results.
     """
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.tabs: list[dict] = []
-        self._current: dict | None = None
+        self.tabs: list[Tab] = []
+        self._current: Tab | None = None
 
-    def handle_starttag(self, tag: str, attrs: list) -> None:
+    def _flush(self) -> None:
+        """Finish the open tab, if any, and append it to `tabs`."""
+        if self._current is None:
+            return
+        self._current["label"] = clean_text(self._current["label"])
+        self.tabs.append(self._current)
+        self._current = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag != "a":
             return
         attr = dict(attrs)
+        # An attribute present but valueless parses as None, hence the `or ""`.
         classes = (attr.get("class") or "").split()
-        if "nav-link" not in classes or not attr.get("href"):
+        href = attr.get("href") or ""
+        # Reject relative and fragment hrefs ('#tab-jadwal'): the caller turns
+        # this URL into both a request and a filename, and '#tab-jadwal' would
+        # yield a malformed request plus the filename 'index.html' for every
+        # such tab. Dropping an unfetchable tab beats emitting a colliding one.
+        if "nav-link" not in classes or not href.startswith(("http://", "https://")):
             return
-        self._current = {
-            "url": attr["href"],
-            "active": "active" in classes,
-            "label": "",
-        }
+        # Flush rather than overwrite: markup missing a '</a>' would otherwise
+        # discard the tab already open, silently costing a whole tab download.
+        self._flush()
+        self._current = {"url": href, "active": "active" in classes, "label": ""}
 
     def handle_data(self, data: str) -> None:
         if self._current is not None:
             self._current["label"] += data
 
     def handle_endtag(self, tag: str) -> None:
-        if tag == "a" and self._current is not None:
-            self._current["label"] = clean_text(self._current["label"])
-            self.tabs.append(self._current)
-            self._current = None
+        if tag == "a":
+            self._flush()
 
 
-def find_tabs(html_text: str) -> list[dict]:
+def find_tabs(html_text: str) -> list[Tab]:
     """Return this package's real tabs: [{'url', 'label', 'active'}, ...].
 
     SPSE renders absolute hrefs here, and the set varies per package (an
     unawarded tender has no evaluasi tabs), so this is the authority on which
-    tabs to fetch rather than a hardcoded table.
+    tabs to fetch rather than a hardcoded table. Every returned 'url' is an
+    absolute http(s) URL; anything else in the markup is skipped.
+
+    An empty list always means "this is not a detail page" -- the fetch failed,
+    returned an error page, or hit a login redirect. It never means "a package
+    with no tabs": every real detail page carries at least a Pengumuman tab.
+    Callers must treat [] as failure, not as an empty success.
     """
     parser = _TabParser()
     parser.feed(html_text)
