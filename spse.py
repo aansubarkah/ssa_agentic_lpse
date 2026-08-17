@@ -8,6 +8,7 @@ docs/plans/2026-08-17-spse-scraper-gui-design.md for the design rationale.
 from __future__ import annotations
 
 import csv
+import json
 import re
 import sys
 import time
@@ -622,3 +623,75 @@ def fetch_html(session, url: str, referer: str, retries: int = MAX_RETRIES,
         if attempt < retries:
             time.sleep(5 * attempt)
     return None
+
+
+def paginate_list(session, api_url: str, token: str, kategori: str,
+                  page_size: int = PAGE_SIZE, cap: int = 200000,
+                  referer: str = "", log=print) -> list:
+    """Fetch every row of one category by paging the DataTables endpoint.
+
+    Stops on an empty or short page. Never trusts recordsTotal, which SPSE
+    hardcodes to Integer.MAX_VALUE.
+    """
+    rows: list = []
+    start = 0
+    while len(rows) < cap:
+        page: list = []
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                body = build_dt_body(token, kategori, start, page_size)
+                response = session.post(
+                    api_url, data=body,
+                    headers={**AJAX_HEADERS, "Referer": referer},
+                    timeout=180,
+                )
+                if response.status_code != 200:
+                    raise RuntimeError(f"HTTP {response.status_code}")
+                payload = response.json()
+                page = payload.get("data", [])
+                break
+            except Exception as err:
+                log(f"  start={start} attempt {attempt}/{MAX_RETRIES}: {err}")
+                if attempt < MAX_RETRIES:
+                    time.sleep(5 * attempt)
+        if not page:
+            break
+        rows.extend(page)
+        log(f"  start={start} -> +{len(page)} rows (total {len(rows)})")
+        if len(page) < page_size:
+            break
+        start += len(page)
+        time.sleep(DELAY_S)
+    return rows
+
+
+def scrape_json(base: str, slug: str, kategori: str, tahun: int,
+                out_dir: Path, force: bool = False, log=print) -> list:
+    """Phase 2. Download the category's row list and cache it as list.json."""
+    cfg = CATEGORIES[kategori]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cache = out_dir / "list.json"
+    if cache.exists() and cache.stat().st_size > MIN_FILE_SIZE and not force:
+        log(f"list.json sudah ada, dipakai ulang ({cache})")
+        return json.loads(cache.read_text(encoding="utf-8"))["data"]
+
+    listing = listing_url(base, kategori, tahun)
+    log(f"Membuka {listing}")
+    session, token = open_session(listing)
+    rows = paginate_list(
+        session, list_api_url(base, kategori, tahun), token, kategori,
+        referer=listing, log=log,
+    )
+    cache.write_text(
+        json.dumps({"data": rows}, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    (out_dir / "meta.json").write_text(
+        json.dumps({
+            "slug": slug, "kategori": kategori, "tahun": tahun,
+            "rows": len(rows), "page_size": PAGE_SIZE,
+            "accepts_tahun": cfg["accepts_tahun"],
+            "scraped_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }, indent=2), encoding="utf-8"
+    )
+    log(f"Tersimpan {len(rows)} baris ke {cache}")
+    return rows
