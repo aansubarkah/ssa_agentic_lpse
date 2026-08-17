@@ -51,6 +51,8 @@ _TANGGAL_RE = re.compile(r"^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$")
 # contract prices. Anything else -- 'APBN 2026', 'Peserta 3', 'Lumsum' -- must
 # not be mistaken for money.
 _RUPIAH_RE = re.compile(r"^(?:Rp\.?\s*)?([\d.,]+)$", re.IGNORECASE)
+_TAG_RE = re.compile(r"<[^>]+>")
+_YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
 
 
 def clean_text(value: str | None) -> str:
@@ -103,6 +105,43 @@ def parse_tanggal(value: str | None) -> str | None:
         return date(int(year), month, int(day)).isoformat()
     except ValueError:
         return None
+
+
+def strip_tags(value: str) -> str:
+    """DataTables cells sometimes contain anchors; keep only their text."""
+    return clean_text(_TAG_RE.sub(" ", value or ""))
+
+
+def extract_ids(rows: list, kategori: str) -> list[str]:
+    """Pull the package id out of each list row."""
+    index = CATEGORIES[kategori]["id_index"]
+    ids: list[str] = []
+    for row in rows:
+        if len(row) <= index:
+            continue
+        value = strip_tags(str(row[index]))
+        if value:
+            ids.append(value)
+    return ids
+
+
+def filter_rows_by_year(rows: list, tahun: int) -> list:
+    """Keep rows mentioning the given year; keep rows with no year at all.
+
+    Only needed for swakelola and darurat, whose endpoints ignore tahun. Rows
+    without any recognisable year are kept, because dropping real data is worse
+    than exporting a little extra.
+    """
+    wanted = str(tahun)
+    kept = []
+    for row in rows:
+        text = " ".join(strip_tags(str(cell)) for cell in row)
+        years = _YEAR_RE.findall(text)
+        if not years:
+            kept.append(row)
+        elif wanted in text:
+            kept.append(row)
+    return kept
 
 
 class Tab(TypedDict):
