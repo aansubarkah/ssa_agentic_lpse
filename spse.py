@@ -961,3 +961,69 @@ def build_rows(detail: dict, slug: str, nama_instansi: str, kategori: str,
             row[f"{column}_iso"] = "" if tanggal is None else tanggal
         row["extra_json"] = json.dumps(extra, ensure_ascii=False) if extra else ""
     return rows
+
+
+def merge_package_detail(package_dir: Path) -> dict | None:
+    """Combine every saved tab of one package into a single parsed detail.
+
+    Later tabs add fields and tables; earlier values win on conflict so the
+    pengumuman page stays authoritative for shared labels.
+    """
+    files = sorted(package_dir.glob("*.html"))
+    if not files:
+        return None
+    merged = {"fields": {}, "tables": [], "named_tables": {}, "tabs": []}
+    for path in files:
+        detail = parse_detail(path.read_text(encoding="utf-8", errors="replace"))
+        for label, value in detail["fields"].items():
+            merged["fields"].setdefault(label, value)
+        merged["tables"].extend(detail["tables"])
+        for key, table in detail["named_tables"].items():
+            if key not in merged["named_tables"] or table["rows"]:
+                merged["named_tables"][key] = table
+        merged["tabs"] = merged["tabs"] or detail["tabs"]
+    return merged
+
+
+def export_csv(packages_dir: Path, out_path: Path, slug: str, nama_instansi: str,
+               kategori: str, tahun: int, base: str, log=print) -> int:
+    """Phase 4. Walk saved HTML, parse, and write the combined CSV."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    written = 0
+    with open(out_path, "w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=CSV_COLUMNS, delimiter="|",
+                                extrasaction="ignore")
+        writer.writeheader()
+        for package_dir in sorted(p for p in packages_dir.iterdir() if p.is_dir()):
+            detail = merge_package_detail(package_dir)
+            if detail is None:
+                continue
+            rows = build_rows(
+                detail, slug=slug, nama_instansi=nama_instansi, kategori=kategori,
+                tahun=tahun, paket_id=package_dir.name,
+                sumber_url=entry_tab_url(base, kategori, package_dir.name),
+            )
+            for row in rows:
+                writer.writerow(row)
+                written += 1
+    log(f"CSV: {written} baris -> {out_path}")
+    return written
+
+
+def export_excel(csv_path: Path, log=print) -> Path | None:
+    """Convert the CSV to .xlsx. openpyxl is imported here so the normal path
+    keeps requests as the only dependency."""
+    try:
+        from openpyxl import Workbook
+    except ImportError:
+        log("openpyxl belum terpasang; lewati Excel (uv add openpyxl)")
+        return None
+    workbook = Workbook()
+    sheet = workbook.active
+    with open(csv_path, encoding="utf-8-sig", newline="") as handle:
+        for row in csv.reader(handle, delimiter="|"):
+            sheet.append(row)
+    xlsx_path = csv_path.with_suffix(".xlsx")
+    workbook.save(xlsx_path)
+    log(f"Excel: {xlsx_path}")
+    return xlsx_path
