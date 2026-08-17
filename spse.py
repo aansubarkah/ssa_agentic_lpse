@@ -1275,7 +1275,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip-html", action="store_true")
     parser.add_argument("--skip-csv", action="store_true")
     parser.add_argument("--dry", action="store_true",
-                        help="Count packages only, download nothing")
+                        help="Count packages only: fetch the list (writes "
+                             "list.json) but download no HTML and write no CSV")
     parser.add_argument("--list-agencies", action="store_true",
                         help="Print slug and names, then exit")
     return parser

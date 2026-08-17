@@ -5,15 +5,17 @@ SPSE scraper (Indonesia gov e-procurement). Scrapes tender/nontender/pencatatan 
 ## One command to rule them all
 
 ```bash
-python spse_pipeline.py --url https://spse.inaproc.id/<agency> --tahun <year>
-uv run python spse_pipeline.py --url https://spse.inaproc.id/kemkes --tahun 2024 --limit 5  # test
+python spse.py --agency <slug> --tipe <category> --tahun <year>
+uv run python spse.py --agency kemkes --tipe tender --tahun 2025 --limit 5  # test
+python spse.py  # GUI
 ```
 
 ## Only edit these files
 
 | File | Role |
 |---|---|
-| `spse_pipeline.py` | **Primary script** — scrape + CSV, any agency/year |
+| `spse.py` | **Canonical script** — GUI + CLI, scrape + CSV, any agency/year/category |
+| `spse_pipeline.py`, `scrape_*_batch.py` | **Legacy** — reference only, do not modify |
 | `scrape_all.py`, `scrape_all.js`, `convert_to_csv.js` | **Legacy** — Kemkes 2025 hardcoded, touch only for old output |
 
 Everything else is helper/config scaffolding. `main.py` is a stub.
@@ -67,9 +69,11 @@ output/<agency>/<tahun>/
 | Non Tender | `POST /<agency>/dt/pl` | 12 | `/nontender/{kode}/peserta` | `/nontender/{kode}/pengumumanpl` |
 | Pencatatan | `POST /<agency>/dt/nonspk` | 9 | `/pencatatan/pengumumannonspkpemenang?id={kode}` | `/pencatatan/pengumumannonspk?id={kode}` |
 
-## Command flags (`spse_pipeline.py`)
+## Command flags (`spse.py`)
 
-`--url` (required), `--tahun`, `--categories`, `--limit`, `--skip-json`, `--skip-peserta`, `--skip-pengumuman`, `--skip-csv`, `--dry`
+`--agency` (slug or name), `--tipe` (`tender|nontender|pencatatan|swakelola|darurat`),
+`--tahun`, `--limit`, `--workers`, `--excel`, `--skip-json`, `--skip-html`,
+`--skip-csv`, `--dry`, `--list-agencies`
 
 ## Conventions
 

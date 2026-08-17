@@ -15,6 +15,39 @@ Scraper otomatis untuk mengumpulkan data pengadaan (procurement) dari portal SPS
 
 > **`spse_pipeline.py`** adalah script utama & paling lengkap: scrape + CSV dalam satu perintah, multi-agency, multi-tahun, semua kategori. Script lain (`scrape_all.py/js`, `convert_to_csv.js`) adalah versi lama yang hardcoded untuk **Kemkes 2025**.
 
+## `spse.py` (RECOMMENDED — GUI + CLI)
+
+`spse.py` adalah entrypoint terbaru: satu file Python yang bisa dipakai dua
+cara — buka **GUI Tkinter** (jalankan tanpa argumen) untuk memilih instansi,
+tipe, dan tahun lewat dropdown, atau pakai **CLI headless** untuk AI agent.
+Ia menggantikan `spse_pipeline.py` dan mendukung lima kategori:
+`tender`, `nontender`, `pencatatan`, `swakelola`, `darurat`.
+
+```bash
+# GUI (dropdown instansi, tipe, tahun, progress bar)
+python spse.py
+
+# CLI: scrape + CSV untuk satu agency/tipe/tahun
+python spse.py --agency jakarta --tipe tender --tahun 2025
+
+# Hitung jumlah paket saja (tidak download HTML/CSV)
+python spse.py --agency jakarta --tipe tender --dry
+
+# Daftar semua instansi (slug + nama)
+python spse.py --list-agencies
+
+# Re-export CSV dari data yang sudah ada (tanpa network)
+python spse.py --agency kemkes --tipe tender --skip-json --skip-html
+
+# Uji coba: 5 paket per kategori
+python spse.py --agency kemkes --tipe tender --tahun 2025 --limit 5
+```
+
+Output: `output/<slug>/<tahun>/<kategori>/` (list.json + html per paket) dan
+CSV pipe-delimited di `output/<slug>/<tahun>/<slug>_<tahun>_<kategori>.csv`.
+Scraping aman di-resume: file yang sudah selesai (>200 byte) otomatis di-skip.
+Untuk detail teknis, baca `SPSE_SCRAPER.md`.
+
 ## Data Apa yang Diambil?
 
 | Kategori | Jumlah Paket | Sumber |

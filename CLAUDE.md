@@ -12,30 +12,38 @@ A scraper for **SPSE** (Sistem Pengadaan Secara Elektronik — Indonesia's gover
 
 ## The one script that matters
 
-**`spse_pipeline.py`** is the primary, fully-generalized script. It supersedes the legacy scripts (`scrape_all.py`, `scrape_all.js`, `convert_to_csv.js`, etc.), which are hardcoded to **Kemkes 2025** and should only be touched when maintaining that old output. Start any new work here.
+**`spse.py`** is the canonical entrypoint: a single file with a Tkinter GUI
+(no arguments) and a headless CLI (arguments). It supersedes
+`spse_pipeline.py` and supports all five categories (`tender`, `nontender`,
+`pencatatan`, `swakelola`, `darurat`). `spse_pipeline.py` and the
+`scrape_*_batch.py` scripts stay on disk as reference and should not be
+modified. Start any new work in `spse.py`.
 
 ```bash
-# Full pipeline (scrape JSON + HTML + combined CSV)
-python spse_pipeline.py --url https://spse.inaproc.id/<agency> --tahun <year>
+# GUI
+python spse.py
 
-# Test run: 5 paket per category
-python spse_pipeline.py --url https://spse.inaproc.id/kemkes --tahun 2024 --limit 5
+# Headless: one agency, one category, one year
+python spse.py --agency jakarta --tipe tender --tahun 2025
+
+# Test run: 5 paket
+python spse.py --agency kemkes --tipe tender --tahun 2025 --limit 5
 
 # Re-export CSV from already-scraped data (no network)
-python spse_pipeline.py --url https://spse.inaproc.id/kemkes --tahun 2025 \
-    --skip-json --skip-peserta --skip-pengumuman
+python spse.py --agency kemkes --tipe tender --skip-json --skip-html
 
-# Just count packages
-python spse_pipeline.py --url https://spse.inaproc.id/mahkamahagung --tahun 2025 --dry
+# Count packages
+python spse.py --agency kemkes --tipe tender --dry
 ```
 
-There is no build step, no test suite, and no linter configured.
+There is no build step. The test suite is pytest (dev-only); run it with
+`uv run pytest -q`.
 
 ## Environment / commands
 
 - **Python** (managed by `uv`, requires Python >=3.14): single dependency `requests`.
   - Install: `uv sync` (or `pip install requests`)
-  - Run: `uv run python spse_pipeline.py ...` or plain `python spse_pipeline.py ...`
+  - Run: `uv run python spse.py ...` or plain `python spse.py ...`
 - **Node.js** v22, zero runtime deps (native `https` + `zlib`); `exceljs` is dev-only (used by `csv_to_excel.js`). `npm install` pulls dev deps.
 
 ## context-mode tools
@@ -65,7 +73,7 @@ Endpoints & HTML URL patterns (all parameterized by `spse_pipeline.py`):
 | Category | DataTables endpoint | Cols | Peserta/HTML | Pengumuman/HTML |
 |---|---|---|---|---|
 | Tender | `/dt/lelang` | 16 | `/lelang/{kode}/peserta` | `/lelang/{kode}/pengumumanlelang` |
-| Non Tender | `/dt/pl` | 12 | `/nontender/{kode}/peserta` | `/nontender/{kode}/pengumumapl` |
+| Non Tender | `/dt/pl` | 12 | `/nontender/{kode}/peserta` | `/nontender/{kode}/pengumumanpl` |
 | Pencatatan | `/dt/nonspk` | 9 | `/pencatatan/pengumumannonspkpemenang?id={kode}` | `/pencatatan/pengumumannonspk?id={kode}` |
 
 **CSV export** merges the JSON fields + parsed pengumuman fields (9) + peserta fields (5) into 28 pipe-delimited columns; each package expands to N rows (one per participant). `spse_pipeline.py` does all three categories; legacy `convert_to_csv.js` only does tender.

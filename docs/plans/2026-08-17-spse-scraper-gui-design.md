@@ -207,7 +207,8 @@ Any label absent from `LABEL_MAP` is serialised into `extra_json` rather than
 dropped, so an unseen SPSE field still reaches the CSV and promoting it to a real
 column later is a one-line change with no re-scrape.
 
-Output: `output/<slug>/<tahun>/<kategori>.csv`, pipe-delimited, UTF-8 with BOM.
+Output: `output/<slug>/<tahun>/<slug>_<tahun>_<kategori>.csv` (one file per
+category run, in the year folder), pipe-delimited, UTF-8 with BOM.
 `.xlsx` alongside it when requested.
 
 ## GUI
