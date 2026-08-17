@@ -7,6 +7,7 @@ docs/plans/2026-08-17-spse-scraper-gui-design.md for the design rationale.
 
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import re
@@ -1088,3 +1089,87 @@ def run_pipeline(agency: dict, kategori: str, tahun: int,
         if excel:
             export_excel(csv_path, log=log)
     return stats
+
+
+def launch_gui() -> None:
+    raise NotImplementedError("GUI arrives in the next task")
+
+
+def resolve_tahun(value: int | None) -> int:
+    """Default the fiscal year to the current one when unspecified."""
+    return int(value) if value else date.today().year
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="spse.py",
+        description="Scrape SPSE procurement data. No arguments opens the GUI.",
+    )
+    parser.add_argument("--agency", help="LPSE slug or agency name, e.g. jakarta")
+    parser.add_argument("--tipe", choices=sorted(CATEGORIES),
+                        help="Procurement category")
+    parser.add_argument("--tahun", type=int, help="Fiscal year (default: current)")
+    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
+    parser.add_argument("--limit", type=int, default=0,
+                        help="Only the first N packages (0 = all)")
+    parser.add_argument("--csv", default=AGENCY_CSV, help="Agency list csv")
+    parser.add_argument("--out", default=str(OUTPUT_ROOT), help="Output root")
+    parser.add_argument("--excel", action="store_true", help="Also write .xlsx")
+    parser.add_argument("--skip-json", action="store_true")
+    parser.add_argument("--skip-html", action="store_true")
+    parser.add_argument("--skip-csv", action="store_true")
+    parser.add_argument("--dry", action="store_true",
+                        help="Count packages only, download nothing")
+    parser.add_argument("--list-agencies", action="store_true",
+                        help="Print slug and names, then exit")
+    return parser
+
+
+def run_cli(argv: list[str]) -> int:
+    args = build_parser().parse_args(argv)
+    agencies = load_agencies(args.csv)
+
+    if args.list_agencies:
+        for agency in agencies:
+            print(f"{agency['slug']}\t{' ; '.join(agency['names'])}")
+        return 0
+
+    if not args.agency or not args.tipe:
+        print("Butuh --agency dan --tipe. Lihat --help atau --list-agencies.")
+        return 2
+
+    agency = match_agency(agencies, args.agency)
+    if agency is None:
+        print(f"Instansi '{args.agency}' tidak ditemukan. Coba --list-agencies.")
+        return 3
+
+    tahun = resolve_tahun(args.tahun)
+    if args.dry:
+        rows = scrape_json(agency["base"], agency["slug"], args.tipe, tahun,
+                           run_dir(agency["slug"], tahun, args.tipe, Path(args.out)))
+        if not CATEGORIES[args.tipe]["accepts_tahun"]:
+            rows = filter_rows_by_year(rows, tahun)
+        print(f"{agency['slug']} {args.tipe} {tahun}: {len(rows)} paket")
+        return 0
+
+    stats = run_pipeline(
+        agency, args.tipe, tahun,
+        do_json=not args.skip_json, do_html=not args.skip_html,
+        do_csv=not args.skip_csv, workers=args.workers, excel=args.excel,
+        limit=args.limit, root=Path(args.out),
+    )
+    print(f"Selesai: {stats['paket']} paket, {stats['files']} file baru, "
+          f"{stats['csv_rows']} baris CSV")
+    return 0
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    if not argv:
+        launch_gui()
+        return 0
+    return run_cli(argv)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
