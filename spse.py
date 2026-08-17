@@ -179,3 +179,164 @@ def find_tabs(html_text: str) -> list[Tab]:
     parser = _TabParser()
     parser.feed(html_text)
     return parser.tabs
+
+
+class _DetailParser(HTMLParser):
+    """Extract label/value fields and nested sub-tables from a detail page."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.fields: dict[str, str] = {}
+        self.tables: list[dict] = []
+        self._in_content = False
+        self._content_depth = 0        # div nesting inside div.content
+        self._table_depth = 0
+        # One cell list per open table, not one shared list. A sub-table sits
+        # inside a <td colspan> of the outer table, so its <tr> tags fire while
+        # the outer row is still open; resetting a shared list there wiped the
+        # outer row's already-closed label cell ('Rencana Umum Pengadaan',
+        # 'Syarat Kualifikasi') and cost those fields entirely.
+        self._cells_stack: list[list[dict]] = []
+        self._cell: dict | None = None
+        # A cell still open when a nested <table> starts is parked here and
+        # restored at </table>. Without parking, the nested <th>/<td> tags
+        # overwrite self._cell and the enclosing cell's text is dropped.
+        self._parked_cells: list[dict] = []
+        self._rows_stack: list[list] = []   # one row list per open table
+
+    # -- div tracking ----------------------------------------------------
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        attr = dict(attrs)
+        if tag == "div":
+            if self._in_content:
+                self._content_depth += 1
+            elif "content" in (attr.get("class") or "").split():
+                self._in_content = True
+                self._content_depth = 1
+            return
+        if not self._in_content:
+            return
+        if tag == "table":
+            self._table_depth += 1
+            self._rows_stack.append([])
+            self._cells_stack.append([])
+            if self._cell is not None:
+                self._parked_cells.append(self._cell)
+                self._cell = None
+        elif tag == "tr":
+            # Reset only the innermost table's row; outer rows stay intact.
+            if self._cells_stack:
+                self._cells_stack[-1] = []
+        elif tag in ("th", "td"):
+            self._cell = {
+                "tag": tag,
+                "classes": (attr.get("class") or "").split(),
+                "text": "",
+                "links": [],
+                "depth": self._table_depth,
+            }
+        elif tag == "a" and self._cell is not None and attr.get("href"):
+            self._cell["links"].append(attr["href"])
+
+    def handle_data(self, data: str) -> None:
+        # Only accumulate text belonging to the innermost open table, so a
+        # nested table's contents do not pollute the enclosing cell's value.
+        # While a nested table is open the enclosing cell is parked (None),
+        # which is what keeps sub-table text out of the field's value.
+        if self._cell is not None and self._cell["depth"] == self._table_depth:
+            self._cell["text"] += data
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "div" and self._in_content:
+            self._content_depth -= 1
+            if self._content_depth <= 0:
+                self._in_content = False
+            return
+        if not self._in_content:
+            return
+        if tag in ("th", "td"):
+            if self._cell is not None:
+                self._cell["text"] = clean_text(self._cell["text"])
+                # A cell closes in the table it was opened in, which is not
+                # necessarily the innermost one: the <td> wrapping a sub-table
+                # ends only after the sub-table's </table> has fired.
+                depth = self._cell["depth"] - 1
+                if 0 <= depth < len(self._cells_stack):
+                    self._cells_stack[depth].append(self._cell)
+                self._cell = None
+        elif tag == "tr":
+            self._finish_row()
+        elif tag == "table":
+            self._finish_table()
+
+    # -- row / table classification --------------------------------------
+    def _finish_row(self) -> None:
+        if not self._cells_stack:
+            return
+        cells = [c for c in self._cells_stack[-1] if c["depth"] == self._table_depth]
+        self._cells_stack[-1] = []
+        if not cells:
+            return
+        first = cells[0]
+        if first["tag"] == "th" and "bgwarning" in first["classes"]:
+            self._emit_fields(cells)
+            return
+        if self._rows_stack:
+            self._rows_stack[-1].append(
+                {"tags": [c["tag"] for c in cells],
+                 "values": [c["text"] for c in cells]}
+            )
+
+    def _emit_fields(self, cells: list[dict]) -> None:
+        # Most field rows are one label followed by its value cells, but the
+        # non-tender pengumuman page packs 'Nilai Pagu Paket' and 'Nilai HPS
+        # Paket' into a single <tr> (th, td, th, td). The row is therefore
+        # split at every bgwarning cell; each label owns the plain cells up
+        # to the next label (or the end of the row).
+        starts = [i for i, c in enumerate(cells)
+                  if c["tag"] == "th" and "bgwarning" in c["classes"]]
+        for position, start in enumerate(starts):
+            end = starts[position + 1] if position + 1 < len(starts) else len(cells)
+            value_cells = cells[start + 1:end]
+            label = cells[start]["text"]
+            value = " ".join(c["text"] for c in value_cells if c["text"]).strip()
+            links = [href for c in value_cells for href in c["links"]]
+            self.fields[label] = clean_text(value)
+            if links:
+                self.fields.setdefault(f"{label} [url]", links[0])
+
+    def _finish_table(self) -> None:
+        rows = self._rows_stack.pop() if self._rows_stack else []
+        if self._cells_stack:
+            self._cells_stack.pop()
+        if self._parked_cells:
+            # Restore the cell this table was nested inside, if any, so text
+            # after the sub-table still lands in the enclosing value.
+            self._cell = self._parked_cells.pop()
+        self._table_depth = max(0, self._table_depth - 1)
+        if not rows:
+            return
+        header: list[str] = []
+        data_rows: list[list[str]] = []
+        for row in rows:
+            if all(tag == "th" for tag in row["tags"]) and not header:
+                header = row["values"]
+            else:
+                data_rows.append(row["values"])
+        self.tables.append({"header": header, "rows": data_rows})
+
+
+def parse_detail(html_text: str) -> dict:
+    """Parse one SPSE detail page.
+
+    Returns {'fields': {label: value}, 'tables': [...], 'tabs': [...]}.
+    One parser serves all five categories because every detail page shares
+    the same markup contract; see SPSE_SCRAPER.md.
+    """
+    parser = _DetailParser()
+    parser.feed(html_text)
+    return {
+        "fields": parser.fields,
+        "tables": parser.tables,
+        "tabs": find_tabs(html_text),
+    }
