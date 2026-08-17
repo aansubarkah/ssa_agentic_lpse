@@ -10,11 +10,14 @@ from __future__ import annotations
 import csv
 import re
 import sys
+import time
 from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import TypedDict
 from urllib.parse import urlparse
+
+import requests
 
 
 if sys.platform == "win32":
@@ -524,3 +527,72 @@ def match_agency(agencies: list[dict], query: str) -> dict | None:
     # antariksa' -> pertanian via 'kementerian') is a guess, and the docstring
     # promises None rather than guessing.
     return best if best_score == len(tokens) else None
+
+
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) "
+      "Gecko/20100101 Firefox/133.0")
+
+HTML_HEADERS = {
+    "User-Agent": UA,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+}
+
+AJAX_HEADERS = {
+    "User-Agent": UA,
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+    "X-Requested-With": "XMLHttpRequest",
+}
+
+TOKEN_RE = re.compile(r"authenticityToken\s*=\s*'([^']+)'")
+
+
+def extract_token(html_text: str) -> str:
+    """Pull the CSRF token out of a listing page.
+
+    The name is camelCase; the server returns 403 for authenticity_token.
+    """
+    match = TOKEN_RE.search(html_text)
+    if not match:
+        raise RuntimeError(
+            "authenticityToken not found; response began: "
+            + clean_text(html_text)[:200]
+        )
+    return match.group(1)
+
+
+def open_session(listing: str) -> tuple[requests.Session, str]:
+    """Warm a session on a listing page and return it with a fresh CSRF token."""
+    session = requests.Session()
+    session.headers.update(HTML_HEADERS)
+    response = session.get(listing, allow_redirects=True, timeout=60)
+    response.raise_for_status()
+    return session, extract_token(response.text)
+
+
+def fetch_html(session, url: str, referer: str, retries: int = MAX_RETRIES,
+               log=print) -> str | None:
+    """GET one detail page. Returns None when the page is unavailable.
+
+    The Referer header is mandatory: SPSE answers 403 Akses Ditolak without it
+    even on a session that already holds valid cookies.
+    """
+    for attempt in range(1, retries + 1):
+        try:
+            response = session.get(
+                url, headers={**HTML_HEADERS, "Referer": referer}, timeout=60
+            )
+            if response.status_code == 200:
+                return response.text
+            if response.status_code in (403, 404):
+                # A tab the package genuinely lacks; not worth retrying.
+                log(f"    {response.status_code} {url}")
+                return None
+            log(f"    HTTP {response.status_code} {url} (attempt {attempt})")
+        except Exception as err:  # network hiccup
+            log(f"    {type(err).__name__}: {err} (attempt {attempt})")
+        if attempt < retries:
+            time.sleep(5 * attempt)
+    return None
