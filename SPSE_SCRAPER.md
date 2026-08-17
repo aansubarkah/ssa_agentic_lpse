@@ -39,8 +39,8 @@ categories are configurable; the default is any single category you pass.
 | Tender | `/dt/lelang?rekanan=&tahun=<y>&instansiId=` | yes | `/lelang/{id}/pengumumanlelang` |
 | Non tender | `/dt/pl?tahun=<y>` | yes | `/nontender/{id}/pengumumanpl` |
 | Pencatatan non tender | `/dt/nonspk?rekanan=&tahun=<y>&instansiId=` | yes | `/pencatatan/pengumumannonspk?id={id}` |
-| Pencatatan swakelola | `/dt/swakelola` | no | `/swakelola/{id}/pengumuman` |
-| Pencatatan pengadaan darurat | `/dt/darurat-list` | no | `/darurat/pengumumandarurat?id={id}` |
+| Pencatatan swakelola | `/dt/swakelola?tahun=<y>` | yes | `/swakelola/{id}/pengumuman` |
+| Pencatatan pengadaan darurat | `/dt/darurat-list?tahun=<y>` | yes | `/darurat/pengumumandarurat?id={id}` |
 
 The entry tab is fetched first; its `ul.nav-tabs` bar reveals the package's
 real tabs, which are then fetched too. Tab sets vary per package — an
@@ -49,8 +49,21 @@ as **site-root-relative** paths (`/kemkes/lelang/{id}/peserta`) on the live
 site; `spse.py` resolves them against the origin with `urljoin`. A 403 or 404
 on a discovered tab is logged and skipped, never fatal.
 
-Swakelola and darurat ignore `tahun` server-side, so their rows are fetched
-once per slug and filtered by year in memory.
+All five endpoints filter by `tahun` server-side, swakelola and darurat
+included (verified live on 2026-08-17 against kemkes, jakarta, lkpp and
+kemenkeu; both listing pages carry a year selector offering 2024-2027). An
+earlier revision believed those two ignored `tahun` and filtered the rows in
+memory instead. That was wrong twice over: it downloaded every year on every
+run, and the in-memory filter matched the year anywhere in the row, so
+packages merely *named* "Tahun 2026" leaked into a 2026 run (20 false
+positives out of 1089 on jakarta swakelola). `filter_rows_by_year()` survives
+as a dormant fallback should an endpoint ever start ignoring `tahun` again.
+
+A category returning `0 paket` for a given year is usually just an empty year,
+not a bug -- kemkes has no swakelola or darurat packages in 2026 at all, and
+the site itself shows the same. Cross-check with another agency before
+assuming the scraper is broken: `--agency jakarta --tipe swakelola --tahun
+2026 --dry` returns 1069.
 
 ## Three traps
 

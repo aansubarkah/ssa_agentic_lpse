@@ -10,16 +10,26 @@ def test_tender_list_url_includes_tahun():
     assert url == "https://spse.inaproc.id/kemkes/dt/lelang?rekanan=&tahun=2025&instansiId="
 
 
-def test_swakelola_list_url_has_no_tahun():
-    # The endpoint ignores tahun; filtering happens client-side.
+def test_swakelola_list_url_includes_tahun():
+    # Verified live 2026-08-17: the endpoint filters by tahun server-side, so
+    # the year must be sent. Omitting it returns every year at once and leaves
+    # selection to filter_rows_by_year(), which over-matches on package names.
     url = list_api_url("https://spse.inaproc.id/kemkes", "swakelola", 2025)
-    assert url == "https://spse.inaproc.id/kemkes/dt/swakelola"
-    assert CATEGORIES["swakelola"]["accepts_tahun"] is False
+    assert url == "https://spse.inaproc.id/kemkes/dt/swakelola?tahun=2025"
+    assert CATEGORIES["swakelola"]["accepts_tahun"] is True
 
 
-def test_darurat_list_url():
+def test_darurat_list_url_includes_tahun():
     assert list_api_url("https://spse.inaproc.id/kemkes", "darurat", 2025) == \
-        "https://spse.inaproc.id/kemkes/dt/darurat-list"
+        "https://spse.inaproc.id/kemkes/dt/darurat-list?tahun=2025"
+    assert CATEGORIES["darurat"]["accepts_tahun"] is True
+
+
+def test_every_category_filters_by_year_server_side():
+    # All five endpoints honour tahun, so no category should fall back to the
+    # client-side year filter. A new category defaulting to False would
+    # silently download every year.
+    assert all(cfg["accepts_tahun"] for cfg in CATEGORIES.values())
 
 
 def test_entry_tab_urls_per_category():

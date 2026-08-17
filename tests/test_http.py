@@ -61,4 +61,4 @@ def test_listing_url_is_the_canonical_referer_shape():
     assert listing_url("https://spse.inaproc.id/kemkes", "tender", 2025) == \
         "https://spse.inaproc.id/kemkes/lelang?tahun=2025"
     assert listing_url("https://spse.inaproc.id/kemkes", "swakelola", 2025) == \
-        "https://spse.inaproc.id/kemkes/swakelola"
+        "https://spse.inaproc.id/kemkes/swakelola?tahun=2025"

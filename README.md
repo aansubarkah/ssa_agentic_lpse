@@ -41,6 +41,10 @@ python spse.py --agency kemkes --tipe tender --skip-json --skip-html
 
 # Uji coba: 5 paket per kategori
 python spse.py --agency kemkes --tipe tender --tahun 2025 --limit 5
+
+# Kategori swakelola & darurat (dipakai sama seperti kategori lain)
+python spse.py --agency jakarta --tipe swakelola --tahun 2026 --dry
+python spse.py --agency kemkes --tipe darurat --tahun 2021
 ```
 
 Output: `output/<slug>/<tahun>/<kategori>/` (list.json + html per paket) dan
@@ -48,13 +52,39 @@ CSV pipe-delimited di `output/<slug>/<tahun>/<slug>_<tahun>_<kategori>.csv`.
 Scraping aman di-resume: file yang sudah selesai (>200 byte) otomatis di-skip.
 Untuk detail teknis, baca `SPSE_SCRAPER.md`.
 
+### Filter tahun
+
+Kelima kategori — termasuk `swakelola` dan `darurat` — difilter **server-side**
+lewat parameter `tahun`, jadi `--tahun` selalu berlaku dan hanya baris tahun
+tersebut yang di-download. (Versi sebelumnya menganggap `swakelola`/`darurat`
+mengabaikan `tahun`, lalu menyaringnya di memori. Itu keliru: semua tahun ikut
+ter-download, dan paket yang sekadar *bernama* "Tahun 2026" ikut lolos ke hasil
+2026.)
+
+Kalau sebuah kategori mengembalikan `0 paket`, biasanya tahun itu memang kosong,
+bukan scraper-nya rusak. Contoh: Kemkes tidak punya paket `swakelola` maupun
+`darurat` sama sekali di 2025/2026. Cek silang dengan instansi lain sebelum
+menyimpulkan ada bug:
+
+```bash
+python spse.py --agency jakarta --tipe swakelola --tahun 2026 --dry   # 1069 paket
+python spse.py --agency kemkes  --tipe darurat   --tahun 2021 --dry   # 1 paket
+```
+
 ## Data Apa yang Diambil?
 
-| Kategori | Jumlah Paket | Sumber |
-|---|---|---|
-| **Tender** | ~301 | `/lelang?tahun=2025` |
-| **Non Tender** | ~993 | `/nontender?tahun=2025` |
-| **Pencatatan Non Tender** | ~55 | `/pencatatan?tahun=2025` |
+Contoh jumlah paket untuk Kemkes tahun 2025:
+
+| Kategori | `--tipe` | Jumlah Paket | Sumber |
+|---|---|---|---|
+| **Tender** | `tender` | ~301 | `/lelang?tahun=2025` |
+| **Non Tender** | `nontender` | ~993 | `/nontender?tahun=2025` |
+| **Pencatatan Non Tender** | `pencatatan` | ~55 | `/pencatatan?tahun=2025` |
+| **Pencatatan Swakelola** | `swakelola` | 0 | `/swakelola?tahun=2025` |
+| **Pencatatan Pengadaan Darurat** | `darurat` | 0 | `/darurat?tahun=2025` |
+
+Dua kategori terakhir bernilai 0 karena Kemkes memang tidak punya paketnya di
+2025, bukan karena tidak didukung — lihat "Filter tahun" di atas.
 
 Untuk setiap paket diambil:
 

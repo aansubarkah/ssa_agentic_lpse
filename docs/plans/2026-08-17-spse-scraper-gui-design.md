@@ -26,7 +26,7 @@ not modified.
 | Tab URLs | Hardcode the pengumuman entry tab per category, discover the rest from `ul.nav-tabs` |
 | Attachments (`/dl/<hash>` PDFs) | Not downloaded; the URL is captured into the CSV |
 | Output layout | `output/<slug>/<tahun>/<kategori>/` |
-| Year filter for swakelola/darurat | Endpoints ignore `tahun`; filter client-side after download |
+| Year filter for swakelola/darurat | ~~Endpoints ignore `tahun`; filter client-side after download~~ **Superseded** — see "Correction" below |
 | Export | Pipe-delimited CSV always; `.xlsx` only when requested (lazy `openpyxl` import) |
 | Concurrency | `ThreadPoolExecutor`, `--workers` default 8 |
 | CSV depth | Wide schema from a `LABEL_MAP`, unmapped labels preserved in `extra_json` |
@@ -49,8 +49,29 @@ category's listing page as `Referer`.
 | Tender | `/dt/lelang?rekanan=&tahun=<y>&instansiId=` | yes | `/lelang/{id}/pengumumanlelang` |
 | Non tender | `/dt/pl?tahun=<y>` | yes | `/nontender/{id}/pengumumanpl` |
 | Pencatatan non tender | `/dt/nonspk?rekanan=&tahun=<y>&instansiId=` | yes | `/pencatatan/pengumumannonspk?id={id}` |
-| Pencatatan swakelola | `/dt/swakelola` | no | `/swakelola/{id}/pengumuman` |
-| Pencatatan pengadaan darurat | `/dt/darurat-list` | no | `/darurat/pengumumandarurat?id={id}` |
+| Pencatatan swakelola | `/dt/swakelola?tahun=<y>` | yes (corrected) | `/swakelola/{id}/pengumuman` |
+| Pencatatan pengadaan darurat | `/dt/darurat-list?tahun=<y>` | yes (corrected) | `/darurat/pengumumandarurat?id={id}` |
+
+### Correction: swakelola and darurat do accept `tahun`
+
+This document originally recorded that the swakelola and darurat endpoints
+ignore `tahun`, and the implementation followed suit with `accepts_tahun:
+False` plus a client-side `filter_rows_by_year()`. Re-probed live on
+2026-08-17 against kemkes, jakarta, lkpp and kemenkeu, that is not true:
+
+- `POST /kemkes/dt/swakelola` returns 6 rows spanning 2019-2024;
+  `?tahun=2021` returns 1; `?tahun=2026` returns 0.
+- Both listing pages render a `<select id="tahun">` offering 2024-2027,
+  defaulting to the current year — the same control the tender pages use.
+
+The old approach was wrong in two ways. It downloaded every year on every run
+(jakarta swakelola paginates past 10000 rows unfiltered, versus 1069 for
+2026 alone), and the in-memory filter matched the year anywhere in the row, so
+20 packages named "... Rencana Kerja Tahun 2026" but booked to fiscal 2025
+were exported as 2026 records.
+
+`filter_rows_by_year()` and the `accepts_tahun` guard in `run_pipeline()` are
+retained as a dormant fallback, not deleted, in case an endpoint reverts.
 
 Note: `CLAUDE.md` documents the non-tender tab as `pengumumapl`. That is a typo.
 The correct slug is `pengumumanpl`, confirmed live and in `html_examples/`.
@@ -161,10 +182,9 @@ paginating until a short or empty page. Write the merged response to
 `list.json`, plus a small `meta.json` recording slug, category, tahun, row
 count, page size, and timestamp.
 
-Swakelola and darurat ignore `tahun` server-side, so their `list.json` is cached
-once per slug and filtered by year in memory before phase 3. The filter reads the
-list row's date column, falling back to the `Tahun Anggaran` field in the
-pengumuman HTML.
+Every category sends `tahun` and is filtered server-side, swakelola and darurat
+included; see the Correction above. `list.json` is therefore cached per slug
+*and* year, and no in-memory year filtering runs before phase 3.
 
 ### Phase 3 — HTML
 
@@ -236,8 +256,8 @@ responsive and the progress bar accurate.
 - **Tutup** cancels an active run, waits briefly, then destroys the window.
 
 Typeahead filtering on the instansi combobox matters at 734 entries. When Tahun
-is left empty the current year is used. For swakelola and darurat the year box
-still applies, via the client-side filter.
+is left empty the current year is used. The year box applies to all five
+categories, swakelola and darurat included, and is sent to the server.
 
 ## Error handling
 

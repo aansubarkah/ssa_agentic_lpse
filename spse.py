@@ -132,9 +132,15 @@ def extract_ids(rows: list, kategori: str) -> list[str]:
 def filter_rows_by_year(rows: list, tahun: int) -> list:
     """Keep rows mentioning the given year; keep rows with no year at all.
 
-    Only needed for swakelola and darurat, whose endpoints ignore tahun. Rows
-    without any recognisable year are kept, because dropping real data is worse
-    than exporting a little extra.
+    Dormant fallback. Every category now sets accepts_tahun=True because the
+    server filters by year itself (verified live 2026-08-17), so nothing calls
+    this. It is kept for the case where an endpoint starts ignoring tahun
+    again, which is how swakelola and darurat were originally handled.
+
+    Note the deliberate looseness: the year is matched anywhere in the row, so
+    a package *named* 'Rencana Kerja Tahun 2026' is kept even if its fiscal
+    year is 2025. Over-matching was chosen over dropping real data, which is
+    exactly why server-side filtering is preferred when available.
     """
     wanted = str(tahun)
     kept = []
@@ -479,8 +485,15 @@ CATEGORIES: dict[str, dict] = {
         "label": "Pencatatan Swakelola",
         "listing": "swakelola",
         "endpoint": "dt/swakelola",
-        "query": "",
-        "accepts_tahun": False,
+        "query": "?tahun={tahun}",
+        # Verified live on 2026-08-17 against kemkes, jakarta, lkpp and
+        # kemenkeu: this endpoint DOES honour tahun server-side, contrary to
+        # the original design note. Leaving it off returned every year at once
+        # and left the year selection to filter_rows_by_year(), which matches
+        # the year anywhere in the row and so leaked packages merely *named*
+        # 'Tahun 2026' into a 2026 run (20 false positives out of 1089 on
+        # jakarta). The listing page's own selector offers 2024-2027.
+        "accepts_tahun": True,
         "columns": 5,
         "order_column": 0,
         "entry_tab": "/swakelola/{id}/pengumuman",
@@ -490,8 +503,9 @@ CATEGORIES: dict[str, dict] = {
         "label": "Pencatatan Pengadaan Darurat",
         "listing": "darurat",
         "endpoint": "dt/darurat-list",
-        "query": "",
-        "accepts_tahun": False,
+        "query": "?tahun={tahun}",
+        # Honours tahun server-side, same as swakelola above.
+        "accepts_tahun": True,
         "columns": 5,
         "order_column": 0,
         "entry_tab": "/darurat/pengumumandarurat?id={id}",
