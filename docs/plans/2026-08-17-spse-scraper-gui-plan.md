@@ -212,10 +212,31 @@ def test_parse_rupiah_indonesian_format():
     assert parse_rupiah("Rp. 0,00") == 0.0
 
 
+def test_parse_rupiah_accepts_bare_numbers_without_the_rp_prefix():
+    # The winner sub-tables (Harga Kontrak, Nilai PDN, Nilai UMK) are empty in
+    # every fixture, so we do not know whether they carry the 'Rp' prefix.
+    # Accept both shapes rather than risk blanking real contract prices.
+    assert parse_rupiah("Rp 0,00") == 0.0
+    assert parse_rupiah("1.000.000,00") == 1000000.00
+    assert parse_rupiah("0,00") == 0.0
+    assert parse_rupiah("165146000") == 165146000.0
+
+
 def test_parse_rupiah_returns_none_when_unparseable():
     assert parse_rupiah("") is None
     assert parse_rupiah("-") is None
     assert parse_rupiah("Lumsum") is None
+
+
+def test_parse_rupiah_rejects_non_money_values_seen_in_real_fixtures():
+    # Every string below is a real cell value scraped from html_examples/.
+    # Stripping non-digits made each one yield a bogus float, e.g.
+    # 'APBN 2026' -> 2026.0 and '11 Agustus 2026' -> 112026.0.
+    assert parse_rupiah("APBN 2026") is None
+    assert parse_rupiah("11 Agustus 2026") is None
+    assert parse_rupiah("Peserta 3") is None
+    assert parse_rupiah("2 peserta") is None
+    assert parse_rupiah("APOTEK KIMIA FARMA 103 SAMPIT") is None
 
 
 def test_parse_tanggal_indonesian_month_names():
@@ -247,15 +268,25 @@ docs/plans/2026-08-17-spse-scraper-gui-design.md for the design rationale.
 
 from __future__ import annotations
 
-import io
 import re
 import sys
 
+
 if sys.platform == "win32":
-    # The Windows console defaults to cp1252 and cannot print Indonesian
-    # package names; force UTF-8 on both streams.
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    # The Windows console defaults to cp1252 and raises UnicodeEncodeError on
+    # Indonesian package names; force UTF-8 on both streams. reconfigure() is
+    # used rather than wrapping sys.stdout.buffer in a new TextIOWrapper: a
+    # fresh wrapper takes ownership of a buffer it did not create and closes it
+    # when garbage collected, which breaks any host that has already replaced
+    # the streams (pytest's capture, IDLE, a GUI redirect).
+    for _stream in (sys.stdout, sys.stderr):
+        _reconfigure = getattr(_stream, "reconfigure", None)
+        if _reconfigure is not None:
+            try:
+                _reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
+    del _stream, _reconfigure
 
 BULAN = {
     "januari": 1, "februari": 2, "maret": 3, "april": 4, "mei": 5, "juni": 6,
@@ -265,6 +296,12 @@ BULAN = {
 
 _WS_RE = re.compile(r"\s+")
 _TANGGAL_RE = re.compile(r"^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$")
+# 'Rp. 787.406.000,00' or a bare '1.000.000,00'. The 'Rp' prefix is optional:
+# the winner sub-tables (Harga Kontrak, Nilai PDN, Nilai UMK) are empty in
+# every saved fixture, so requiring the prefix could silently blank real
+# contract prices. Anything else -- 'APBN 2026', 'Peserta 3', 'Lumsum' -- must
+# not be mistaken for money.
+_RUPIAH_RE = re.compile(r"^(?:Rp\.?\s*)?([\d.,]+)$", re.IGNORECASE)
 
 
 def clean_text(value: str | None) -> str:
@@ -276,11 +313,11 @@ def clean_text(value: str | None) -> str:
 
 def parse_rupiah(value: str | None) -> float | None:
     """'Rp. 787.406.000,00' -> 787406000.0; None when not a currency string."""
-    text = clean_text(value)
-    if not text:
+    match = _RUPIAH_RE.match(clean_text(value))
+    if not match:
         return None
-    digits = re.sub(r"[^\d.,]", "", text)
-    if not re.search(r"\d", digits):
+    digits = match.group(1)
+    if not any(char.isdigit() for char in digits):
         return None
     # Indonesian format: '.' groups thousands, ',' is the decimal separator.
     digits = digits.replace(".", "").replace(",", ".")
@@ -305,7 +342,7 @@ def parse_tanggal(value: str | None) -> str | None:
 **Step 4: Run to verify pass**
 
 Run: `uv run pytest tests/test_clean.py -v`
-Expected: 6 passed.
+Expected: 8 passed.
 
 **Step 5: Commit**
 

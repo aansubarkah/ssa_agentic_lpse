@@ -35,6 +35,12 @@ BULAN = {
 
 _WS_RE = re.compile(r"\s+")
 _TANGGAL_RE = re.compile(r"^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$")
+# 'Rp. 787.406.000,00' or a bare '1.000.000,00'. The 'Rp' prefix is optional:
+# the winner sub-tables (Harga Kontrak, Nilai PDN, Nilai UMK) are empty in
+# every saved fixture, so requiring the prefix could silently blank real
+# contract prices. Anything else -- 'APBN 2026', 'Peserta 3', 'Lumsum' -- must
+# not be mistaken for money.
+_RUPIAH_RE = re.compile(r"^(?:Rp\.?\s*)?([\d.,]+)$", re.IGNORECASE)
 
 
 def clean_text(value: str | None) -> str:
@@ -46,11 +52,11 @@ def clean_text(value: str | None) -> str:
 
 def parse_rupiah(value: str | None) -> float | None:
     """'Rp. 787.406.000,00' -> 787406000.0; None when not a currency string."""
-    text = clean_text(value)
-    if not text:
+    match = _RUPIAH_RE.match(clean_text(value))
+    if not match:
         return None
-    digits = re.sub(r"[^\d.,]", "", text)
-    if not re.search(r"\d", digits):
+    digits = match.group(1)
+    if not any(char.isdigit() for char in digits):
         return None
     # Indonesian format: '.' groups thousands, ',' is the decimal separator.
     digits = digits.replace(".", "").replace(",", ".")
