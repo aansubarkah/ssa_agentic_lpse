@@ -12,7 +12,7 @@ Hanya dua file di repo ini yang perlu dipakai dan dibaca:
 | File | Peran |
 |---|---|
 | `spse.py` | Satu-satunya script yang perlu dijalankan. GUI (Tkinter) + CLI, semua instansi, semua tahun, semua kategori, scrape + CSV/Excel. |
-| `all_lpse_urls.csv` | Katalog semua LPSE (kolom: `name`, `url`, `old_url`). Dipakai `spse.py` untuk resolve `--agency` (slug atau nama) dan mengisi dropdown GUI. |
+| `all_lpse_urls.csv` | Katalog URL **seluruh LPSE pemerintah Indonesia**: semua kementerian/lembaga (K/L) dan pemerintah daerah (pemda). 735 baris, 600 LPSE unik (banyak K/L berbagi satu LPSE). Kolom: `name` (nama instansi), `url` (SPSE aktif, `https://spse.inaproc.id/<slug>`), `old_url` (domain `lpse.*.go.id` lama). Dipakai `spse.py` untuk resolve `--agency` (slug atau nama) dan mengisi dropdown GUI. |
 
 Detail teknis `spse.py`: baca `SPSE_SCRAPER.md`.
 
@@ -23,6 +23,13 @@ Folder lain tidak perlu disentuh:
 | `legacy_code/` | Script Python lama, sudah digantikan penuh oleh `spse.py`. Referensi saja. |
 | `legacy_js/` | Script Node.js lama dengan fungsi yang sama. Referensi saja. |
 | `docs/` | Catatan desain dan rencana historis. |
+
+### Aset ikon aplikasi
+
+Empat file ikon di root untuk shortcut/aplikasi di desktop:
+`app_icon.ico` (Windows), `app_icon.icns` (macOS), `app_icon.png` dan
+`app_icon.svg` (sumber/pratinjau). Agent AI yang memasang shortcut untuk GUI
+`spse.py` cukup memakai format sesuai OS.
 
 ## Quick Start
 
@@ -55,7 +62,9 @@ python spse.py --agency kemkes --tipe tender --tahun 2025 --excel
 ### Lokasi daftar instansi
 
 Secara default `spse.py` membaca `output/all_lpse_urls.csv`. Pada clone baru,
-salin dulu katalog dari root, atau pakai flag `--csv`:
+salin dulu katalog dari root, atau pakai flag `--csv`. File ini memuat URL LPSE
+seluruh kementerian, lembaga, dan pemda Indonesia, jadi `--agency` bisa dipakai
+untuk instansi mana pun:
 
 ```bash
 mkdir -p output && cp all_lpse_urls.csv output/     # Linux/macOS
