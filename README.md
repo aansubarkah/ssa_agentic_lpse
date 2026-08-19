@@ -1,311 +1,183 @@
-# SPSE Scraper & CSV Exporter
+# SPSE Scraper (`spse.py`)
 
-Scraper otomatis untuk mengumpulkan data pengadaan (procurement) dari portal SPSE — bekerja untuk **Kementerian/Lembaga/Pemerintah Daerah & tahun apapun**, sekaligus export ke CSV pipe-delimited.
+Scraper untuk portal SPSE (Sistem Pengadaan Secara Elektronik) pemerintah
+Indonesia: **tender, non tender, pencatatan, swakelola, dan pengadaan
+darurat**, untuk **instansi dan tahun anggaran apapun**, lengkap dengan export
+CSV pipe-delimited (dan Excel opsional).
 
-> **SPSE** = Sistem Pengadaan Secara Elektronik — platform e-procurement pemerintah Indonesia (Phoenix/Elixir).
+## File yang perlu dipakai
 
-## Script mana yang harus dijalankan?
+Hanya dua file di repo ini yang perlu dipakai dan dibaca:
 
-| Skenario | Script |
+| File | Peran |
 |---|---|
-| **Scrape agency/tahun apapun + export CSV (RECOMMENDED)** | `python spse_pipeline.py --url <URL> --tahun <TAHUN>` |
-| Re-export CSV dari data yang sudah di-scrape (tanpa download) | `python spse_pipeline.py --url <URL> --tahun <TAHUN> --skip-json --skip-peserta --skip-pengumuman` |
-| Legacy: scrape Kemkes 2025 saja (tanpa CSV) | `python scrape_all.py` atau `node scrape_all.js` |
-| Legacy: convert HTML tender Kemkes 2025 → CSV | `node convert_to_csv.js` |
+| `spse.py` | Satu-satunya script yang perlu dijalankan. GUI (Tkinter) + CLI, semua instansi, semua tahun, semua kategori, scrape + CSV/Excel. |
+| `all_lpse_urls.csv` | Katalog semua LPSE (kolom: `name`, `url`, `old_url`). Dipakai `spse.py` untuk resolve `--agency` (slug atau nama) dan mengisi dropdown GUI. |
 
-> **`spse_pipeline.py`** adalah script utama & paling lengkap: scrape + CSV dalam satu perintah, multi-agency, multi-tahun, semua kategori. Script lain (`scrape_all.py/js`, `convert_to_csv.js`) adalah versi lama yang hardcoded untuk **Kemkes 2025**.
+Detail teknis `spse.py`: baca `SPSE_SCRAPER.md`.
 
-## `spse.py` (RECOMMENDED — GUI + CLI)
+Folder lain tidak perlu disentuh:
 
-`spse.py` adalah entrypoint terbaru: satu file Python yang bisa dipakai dua
-cara — buka **GUI Tkinter** (jalankan tanpa argumen) untuk memilih instansi,
-tipe, dan tahun lewat dropdown, atau pakai **CLI headless** untuk AI agent.
-Ia menggantikan `spse_pipeline.py` dan mendukung lima kategori:
-`tender`, `nontender`, `pencatatan`, `swakelola`, `darurat`.
+| Folder | Isi |
+|---|---|
+| `legacy_code/` | Script Python lama, sudah digantikan penuh oleh `spse.py`. Referensi saja. |
+| `legacy_js/` | Script Node.js lama dengan fungsi yang sama. Referensi saja. |
+| `docs/` | Catatan desain dan rencana historis. |
+
+## Quick Start
 
 ```bash
-# GUI (dropdown instansi, tipe, tahun, progress bar)
+# Install satu-satunya dependency
+uv sync            # atau: pip install requests
+
+# GUI: dropdown instansi, tipe, tahun, progress bar
 python spse.py
 
-# CLI: scrape + CSV untuk satu agency/tipe/tahun
-python spse.py --agency jakarta --tipe tender --tahun 2025
+# CLI: scrape + CSV
+python spse.py --agency kemkes --tipe tender --tahun 2025
 
-# Hitung jumlah paket saja (tidak download HTML/CSV)
-python spse.py --agency jakarta --tipe tender --dry
+# Uji coba kecil: 5 paket saja
+python spse.py --agency kemkes --tipe tender --tahun 2025 --limit 5
+
+# Cek jumlah paket tanpa download
+python spse.py --agency jakarta --tipe swakelola --tahun 2026 --dry
 
 # Daftar semua instansi (slug + nama)
 python spse.py --list-agencies
 
-# Re-export CSV dari data yang sudah ada (tanpa network)
-python spse.py --agency kemkes --tipe tender --skip-json --skip-html
+# Re-export CSV/Excel dari data yang sudah ada (tanpa network)
+python spse.py --agency kemkes --tipe tender --tahun 2025 --skip-json --skip-html
 
-# Uji coba: 5 paket per kategori
-python spse.py --agency kemkes --tipe tender --tahun 2025 --limit 5
-
-# Kategori swakelola & darurat (dipakai sama seperti kategori lain)
-python spse.py --agency jakarta --tipe swakelola --tahun 2026 --dry
-python spse.py --agency kemkes --tipe darurat --tahun 2021
+# Sekalian export Excel (.xlsx)
+python spse.py --agency kemkes --tipe tender --tahun 2025 --excel
 ```
 
-Output: `output/<slug>/<tahun>/<kategori>/` (list.json + html per paket) dan
-CSV pipe-delimited di `output/<slug>/<tahun>/<slug>_<tahun>_<kategori>.csv`.
-Scraping aman di-resume: file yang sudah selesai (>200 byte) otomatis di-skip.
-Untuk detail teknis, baca `SPSE_SCRAPER.md`.
+### Lokasi daftar instansi
 
-### Filter tahun
-
-Kelima kategori — termasuk `swakelola` dan `darurat` — difilter **server-side**
-lewat parameter `tahun`, jadi `--tahun` selalu berlaku dan hanya baris tahun
-tersebut yang di-download. (Versi sebelumnya menganggap `swakelola`/`darurat`
-mengabaikan `tahun`, lalu menyaringnya di memori. Itu keliru: semua tahun ikut
-ter-download, dan paket yang sekadar *bernama* "Tahun 2026" ikut lolos ke hasil
-2026.)
-
-Kalau sebuah kategori mengembalikan `0 paket`, biasanya tahun itu memang kosong,
-bukan scraper-nya rusak. Contoh: Kemkes tidak punya paket `swakelola` maupun
-`darurat` sama sekali di 2025/2026. Cek silang dengan instansi lain sebelum
-menyimpulkan ada bug:
+Secara default `spse.py` membaca `output/all_lpse_urls.csv`. Pada clone baru,
+salin dulu katalog dari root, atau pakai flag `--csv`:
 
 ```bash
-python spse.py --agency jakarta --tipe swakelola --tahun 2026 --dry   # 1069 paket
-python spse.py --agency kemkes  --tipe darurat   --tahun 2021 --dry   # 1 paket
-```
+mkdir -p output && cp all_lpse_urls.csv output/     # Linux/macOS
+mkdir output && copy all_lpse_urls.csv output\       # Windows
 
-## Data Apa yang Diambil?
-
-Contoh jumlah paket untuk Kemkes tahun 2025:
-
-| Kategori | `--tipe` | Jumlah Paket | Sumber |
-|---|---|---|---|
-| **Tender** | `tender` | ~301 | `/lelang?tahun=2025` |
-| **Non Tender** | `nontender` | ~993 | `/nontender?tahun=2025` |
-| **Pencatatan Non Tender** | `pencatatan` | ~55 | `/pencatatan?tahun=2025` |
-| **Pencatatan Swakelola** | `swakelola` | 0 | `/swakelola?tahun=2025` |
-| **Pencatatan Pengadaan Darurat** | `darurat` | 0 | `/darurat?tahun=2025` |
-
-Dua kategori terakhir bernilai 0 karena Kemkes memang tidak punya paketnya di
-2025, bukan karena tidak didukung — lihat "Filter tahun" di atas.
-
-Untuk setiap paket diambil:
-
-1. **Daftar pekerjaan** → file JSON terstruktur
-2. **Halaman peserta/pemenang** → HTML mentah
-3. **Halaman pengumuman** → HTML mentah
-
-## Quick Start
-
-### `spse_pipeline.py` (RECOMMENDED — any agency, any year)
-
-```bash
-# Install dependency
-pip install requests   # atau: uv sync
-
-# Full pipeline: scrape + export single CSV
-python spse_pipeline.py --url https://spse.inaproc.id/mahkamahagung --tahun 2025
-
-# Test: 5 paket per kategori
-python spse_pipeline.py --url https://spse.inaproc.id/kemkes --tahun 2024 --limit 5
-
-# Tender saja
-python spse_pipeline.py --url https://spse.inaproc.id/mahkamahagung --tahun 2025 --categories tender
-
-# Re-export CSV dari data yang sudah di-scrape (tanpa download)
-python spse_pipeline.py --url https://spse.inaproc.id/kemkes --tahun 2025 \
-    --skip-json --skip-peserta --skip-pengumuman
-
-# Cek jumlah paket tanpa download
-python spse_pipeline.py --url https://spse.inaproc.id/mahkamahagung --tahun 2025 --dry
-```
-
-Output tunggal: `output/<agency>/<tahun>/<agency>_<tahun>.csv` (pipe `|` delimited, 28 kolom, semua kategori tergabung dengan kolom `kategori`).
-
-### Legacy scripts (Kemkes 2025 hardcoded)
-
-```bash
-# Python — scrape JSON + HTML (tanpa CSV)
-uv run python scrape_all.py --limit 5
-
-# Node.js — scrape JSON + HTML
-node scrape_all.js
-
-# Convert HTML tender → CSV (pipe delimited)
-node convert_to_csv.js
+# atau tanpa menyalin:
+python spse.py --csv all_lpse_urls.csv --list-agencies
 ```
 
 ## Command Options
 
-### `spse_pipeline.py`
-
 | Flag | Deskripsi |
 |---|---|
-| `--url URL` | **(wajib)** URL agency SPSE, mis. `https://spse.inaproc.id/mahkamahagung` |
-| `--tahun TAHUN` | Tahun anggaran (default: tahun berjalan) |
-| `--categories C` | Subset: `tender,nontender,pencatatan` (default: semua) |
-| `--limit N` | Batasi N paket per kategori (testing) |
-| `--skip-json` | Skip scrape JSON, pakai file yang sudah ada |
-| `--skip-peserta` | Skip download HTML peserta/pemenang |
-| `--skip-pengumuman` | Skip download HTML pengumuman |
-| `--skip-csv` | Skip export CSV (hanya scrape) |
+| `--agency A` | Slug LPSE atau nama instansi, mis. `jakarta` atau `kemkes` |
+| `--tipe T` | `tender`, `nontender`, `pencatatan`, `swakelola`, atau `darurat` |
+| `--tahun Y` | Tahun anggaran (default: tahun berjalan) |
+| `--limit N` | Batasi N paket (untuk testing) |
+| `--workers N` | Paralel download HTML (default: 8) |
+| `--excel` | Sekalian tulis file `.xlsx` |
+| `--skip-json` | Skip scrape daftar paket, pakai `list.json` yang ada |
+| `--skip-html` | Skip download HTML, pakai file yang ada |
+| `--skip-csv` | Skip export CSV |
+| `--csv PATH` | Path katalog instansi (default: `output/all_lpse_urls.csv`) |
+| `--out DIR` | Root output (default: `output/`) |
 | `--dry` | Cek jumlah paket tanpa download |
+| `--list-agencies` | Cetak semua slug + nama instansi |
 
-### Legacy (`scrape_all.py` / `scrape_all.js`)
+Tanpa argumen apa pun, `spse.py` membuka GUI.
 
-| Flag | Deskripsi |
-|---|---|
-| *(tanpa flag)* | Full scrape: JSON + semua HTML |
-| `--limit N` | Batasi N paket per kategori (untuk testing) |
-| `--skip-json` | Skip scrape JSON, pakai file yang sudah ada di `output/` |
-| `--skip-peserta` | Skip download HTML peserta/pemenang |
-| `--skip-pengumuman` | Skip download HTML pengumuman |
-| `--dry` | Cek jumlah paket tanpa download |
+## Kategori
+
+| Kategori | `--tipe` | Listing page | DataTables endpoint (POST) | Kolom | Tab awal per paket |
+|---|---|---|---|---|---|
+| Tender | `tender` | `/lelang?tahun=Y` | `/dt/lelang` | 16 | `/lelang/{id}/pengumumanlelang` |
+| Non Tender | `nontender` | `/nontender?tahun=Y` | `/dt/pl` | 12 | `/nontender/{id}/pengumumanpl` |
+| Pencatatan Non Tender | `pencatatan` | `/pencatatan?tahun=Y` | `/dt/nonspk` | 9 | `/pencatatan/pengumumannonspk?id={id}` |
+| Pencatatan Swakelola | `swakelola` | `/swakelola?tahun=Y` | `/dt/swakelola` | 5 | `/swakelola/{id}/pengumuman` |
+| Pencatatan Pengadaan Darurat | `darurat` | `/darurat?tahun=Y` | `/dt/darurat-list` | 5 | `/darurat/pengumumandarurat?id={id}` |
+
+Semua kategori difilter **server-side** lewat parameter `tahun`, jadi `--tahun`
+selalu berlaku. Kalau sebuah kategori mengembalikan `0 paket`, biasanya tahun
+itu memang kosong untuk instansi tersebut, bukan scraper-nya rusak. Contoh:
+Kemkes tidak punya paket `swakelola` maupun `darurat` di 2025/2026, sedangkan
+jakarta punya ribuan paket `swakelola` di 2026.
+
+Dari tab awal, scraper membaca nav bar halaman untuk menemukan tab lain
+(peserta/pemenang, pengumuman, RUP, realisasi) lalu mengunduh semuanya.
 
 ## Output
 
-### `spse_pipeline.py` (per agency + tahun)
-
 ```
 output/
-└── <agency>/                         # mis. mahkamahagung, kemkes
-    └── <tahun>/                      # mis. 2025
-        ├── tender_<tahun>.json
-        ├── non_tender_<tahun>.json
-        ├── pencatatan_non_tender_<tahun>.json
-        ├── html/
-        │   ├── tender/{peserta,pengumuman}/
-        │   ├── non_tender/{peserta,pengumuman}/
-        │   └── pencatatan/{pemenang,pengumuman}/
-        └── <agency>_<tahun>.csv      # single combined, pipe-delimited (28 kolom)
+└── <slug>/                        # mis. kemkes
+    └── <tahun>/                   # mis. 2025
+        ├── <kategori>/            # tender | nontender | pencatatan | swakelola | darurat
+        │   ├── list.json          # daftar paket (cache; dipakai ulang oleh --skip-json)
+        │   ├── meta.json          # info run
+        │   ├── failed.json        # paket yang gagal (kalau ada)
+        │   └── <kode_paket>/      # HTML per tab untuk tiap paket
+        └── <slug>_<tahun>_<kategori>.csv
 ```
 
-**Kolom CSV gabungan (28):** `kategori` + field JSON (kode, nama, instansi, status, nilai_pagu, …) + 9 field pengumuman (`kode_rup`, `nama_paket`, `nilai_hps_paket`, `lokasi_pekerjaan`, …) + 5 field peserta (`peserta_no`, `peserta_nama`, `peserta_npwp`, `peserta_harga_penawaran`, `peserta_harga_terkoreksi`). Tiap paket di-expand menjadi N baris (1 per peserta) — sama dengan logika `convert_to_csv.js`.
+CSV: pipe-delimited (`|`), 35 kolom (`slug`, `nama_instansi`, `kategori`,
+`tahun`, `kode_paket`, `nama_paket`, ..., `nama_pemenang`, `npwp`,
+`harga_kontrak`, `sumber_url`, `extra_json`), UTF-8 dengan BOM agar langsung
+terbuka benar di Excel. Satu paket di-expand menjadi satu baris per
+peserta/pemenang.
 
-### Legacy (`scrape_all.py` — Kemkes 2025 flat)
+## Cara Kerja & Gotchas
 
-```
-output/
-├── tender_2025.json                  # 301 paket tender
-├── non_tender_2025.json              # 993 paket non tender
-├── pencatatan_non_tender_2025.json    # 55 paket pencatatan
-└── html/
-    ├── tender/
-    │   ├── peserta/                  # halaman daftar peserta tender
-    │   └── pengumuman/                # halaman pengumuman lelang
-    ├── non_tender/
-    │   ├── peserta/                  # halaman daftar peserta non tender
-    │   └── pengumuman/               # halaman pengumuman pl
-    └── pencatatan/
-        ├── pemenang/                 # halaman pemenang
-        └── pengumuman/               # halaman pengumuman nonspk
-```
+1. **CSRF**: GET halaman listing untuk token; kirim sebagai
+   `authenticityToken` (camelCase, bukan `authenticity_token`). Server
+   membalas 403 kalau salah.
+2. **Paginasi**: POST ke endpoint DataTables, 10000 baris per halaman. Berhenti
+   saat halaman kosong, bukan saat `recordsTotal`, karena `recordsTotal`
+   selalu `2147483647` (`Integer.MAX_VALUE`), bukan jumlah asli.
+3. **Rate limiting**: jeda 0.6 detik antar halaman list. Retry otomatis
+   sampai 3 kali dengan backoff.
+4. **Smart resume**: file HTML di bawah 200 byte dianggap halaman error dan
+   di-fetch ulang; yang sudah benar di-skip. Aman dihentikan dan dilanjutkan.
+5. **Sesi segar per kategori**: setiap kategori mulai dengan GET baru ke
+   halaman listing agar token CSRF masih valid.
+6. Beberapa halaman peserta memang gagal (403/redirect), biasanya paket batal.
 
-### Format JSON
+## Environment
 
-Setiap paket memiliki field-field berikut:
+- Python >= 3.14, satu dependency: `requests` (`uv sync`)
+- Tidak butuh Node.js; semua script Node.js lama ada di `legacy_js/` dan tidak
+  dipakai lagi
+- Windows: script sudah memaksa UTF-8 di stdout/stderr (workaround cp1252)
 
-**Tender** (11 field):
-`kode`, `nama`, `instansi`, `status`, `nilai_pagu`, `kualifikasi`, `metode_pemilihan`, `evaluasi`, `jenis_pengadaan`, `peserta`, `nilai_kontrak`
-
-**Non Tender** (9 field):
-`kode`, `nama`, `instansi`, `status`, `nilai_pagu`, `metode`, `jenis_pengadaan`, `peserta`, `nilai_kontrak`
-
-**Pencatatan Non Tender** (9 field):
-`kode`, `nama`, `instansi`, `nilai_pagu`, `metode`, `jenis_pengadaan`, `tahun`, `peserta`, `status`
-
-### Format HTML
-
-File HTML disimpan dengan format: `{KODE}_{nama_paket}.html`
-
-Contoh: `10102584000_Penyediaan BMHP Skrining Gagal Ginjal Kronik Tahap II.html`
-
-## Fitur
-
-- **Smart resume** — file HTML yang sudah ada (>200 bytes) otomatis di-skip, aman di-run ulang
-- **Rate limiting** — delay 600ms antar request untuk menghindari blokir server
-- **Auto retry** — satu kali retry otomatis jika request gagal
-- **No external dependencies** (Node.js) — murni `https` + `zlib` bawaan Node
-- **Single dependency** (Python) — cukup `requests`
-
-## Cara Kerja
-
-1. **GET halaman utama** → ekstrak `authenticityToken` dari JS inline (Phoenix CSRF)
-2. **POST DataTables API** → paginasi 300 baris/halaman, kumpulkan semua halaman
-3. **GET halaman detail** → simpan HTML peserta/pemenang & pengumuman per paket
-
-Token CSRF harus dikirim sebagai `authenticityToken` (camelCase) — bukan `authenticity_token`. Token di-refresh setiap kali ganti seksi scraping.
-
-## Struktur Kode
-
-```
-spse_pipeline.py     # Script utama: scrape + CSV, multi-agency & multi-tahun (Python)
-scrape_all.py        # Legacy: scrape Kemkes 2025 (Python) — salinan 1:1 dari scrape_all.js
-scrape_all.js        # Legacy: scrape Kemkes 2025 (Node.js)
-convert_to_csv.js    # Legacy: convert HTML tender Kemkes 2025 → CSV (Node.js, tender saja)
-convert_no_html.js   # Convert JSON → CSV tanpa parsing HTML
-scrape_spse.js       # Script lama: daftar pekerjaan + peserta (Node.js)
-scrape_pengumuman.js # Script lama: pengumuman saja (Node.js)
-scrape_info.md       # Referensi API: URL, headers, contoh response
-```
-
-## Keterbatasan
-
-- `recordsTotal: 2147483647` = `Integer.MAX_VALUE` — bukan jumlah real, paginasi berhenti saat baris kosong
-- Beberapa halaman peserta bisa gagal (403/redirect) — biasanya paket batal atau dibatalkan
-- Script legacy (`scrape_all.py/js`, `convert_to_csv.js`) hardcoded untuk **Kemkes 2025** — gunakan `spse_pipeline.py` untuk agency/tahun lain
-- `convert_to_csv.js` hanya memproses kategori **tender**; `spse_pipeline.py` memproses semua kategori sekaligus
-
----
-
-<!-- AI AGENT CONTEXT — informasi teknis untuk agent AI yang mengerjakan repo ini -->
+<!-- AI AGENT CONTEXT: informasi teknis untuk agent AI yang mengerjakan repo ini -->
 
 ## [AGENT CONTEXT] Technical Reference
 
-> **Mulai dari mana?** Untuk hampir semua kebutuhan, gunakan `spse_pipeline.py --url <URL> --tahun <TAHUN>`. Endpoint, column counts, dan HTML URL patterns di bawah sudah diparameterisasi penuh oleh script ini. Script legacy hanya relevant bila mempertahankan output Kemkes 2025 yang lama.
+> Mulai dari `spse.py` dan `all_lpse_urls.csv`. Semua endpoint dan pola URL di
+> bawah sudah diparameterisasi penuh oleh `spse.py` (dict `CATEGORIES`).
+> Folder `legacy_code/` dan `legacy_js/` hanya referensi historis.
 
 ### Target Server
-- **Base URL**: `https://spse.inaproc.id/<agency>` — agency = path segment pertama (mis. `kemkes`, `mahkamahagung`)
-- **Backend**: Phoenix (Elixir) — server-side rendered, tidak perlu browser/JS runtime
-- **CSRF**: Token di-embed di JS variable `authenticityToken = '...'` di HTML halaman utama
-- **Cookie session**: `SPSE_SESSION` berisi `___AT` (auth token), `___TS` (timestamp), `___ID` (session ID)
+- Base URL: `https://spse.inaproc.id/<slug>`, contoh `kemkes`, `jakarta`
+- Backend: Phoenix (Elixir), server-side rendered, tidak perlu browser
+- CSRF: token di-embed di JS variable `authenticityToken = '...'` pada HTML
+  halaman listing
+- Cookie session: `SPSE_SESSION` berisi `___AT`, `___TS`, `___ID`
 
 ### Authentication Flow
 ```
-1. GET /kemkes/{section}?tahun=2025
-   → Response HTML contains: authenticityToken = 'TOKEN_HERE'
-2. POST /kemkes/dt/{endpoint}?tahun=2025
-   → Body: authenticityToken=TOKEN_HERE&draw=1&start=0&length=300&...columns...
-   → Headers: X-Requested-With: XMLHttpRequest, Cookie: SPSE_SESSION=...
-   → Response: {"draw":"1","recordsTotal":2147483647,"data":[[col0,col1,...],...]}
+1. GET /<slug>/{listing}?tahun=2025
+   -> HTML berisi: authenticityToken = 'TOKEN_HERE'
+2. POST /<slug>/dt/{endpoint}?tahun=2025
+   -> Body: authenticityToken=TOKEN_HERE&draw=1&start=0&length=10000&...
+   -> Headers: X-Requested-With: XMLHttpRequest, Cookie: SPSE_SESSION=...
+   -> Response: {"draw":"1","recordsTotal":2147483647,"data":[[...],...]}
 ```
 
-### API Endpoints
-| Endpoint | Method | Columns | Kategori |
-|---|---|---|---|
-| `/dt/lelang?tahun=2025` | POST | 16 | Tender |
-| `/dt/pl?tahun=2025` | POST | 12 | Non Tender |
-| `/dt/nonspk?tahun=2025` | POST | 9 | Pencatatan Non Tender |
-
-### HTML Page Patterns
-| Halaman | URL Pattern |
-|---|---|
-| Tender Peserta | `/lelang/{kode}/peserta` |
-| Tender Pengumuman | `/lelang/{kode}/pengumumanlelang` |
-| Non Tender Peserta | `/nontender/{kode}/peserta` |
-| Non Tender Pengumuman | `/nontender/{kode}/pengumumanpl` |
-| Pencatatan Pemenang | `/pencatatan/pengumumannonspkpemenang?id={kode}` |
-| Pencatatan Pengumuman | `/pencatatan/pengumumannonspk?id={kode}` |
-
 ### Key Decisions (jangan diubah tanpa pemahaman penuh)
-- **`authenticityToken`** (camelCase) — bukan snake_case. Server return 403 jika salah.
-- **Page size 300** — max yang diizinkan DataTables server-side config
-- **Delay 600ms** — antar request, untuk menghindari rate limiting
-- **Session init per seksi** — GET halaman utama sebelum scrape setiap seksi untuk dapat token segar
-- **File HTML > 200 bytes** — threshold untuk skip (file kecil kemungkinan error page)
-
-### Python Environment
-- Managed by **uv** — `uv sync` untuk install deps, `uv run python` untuk eksekusi
-- Python >= 3.14, single dependency: `requests`
-- Windows: UTF-8 console wrapper sudah di-handle di script (cp1252 issue)
-
-### Node.js Environment
-- Node.js v22.22.3
-- Zero dependencies — native `https` + `zlib`
+- `authenticityToken` camelCase; snake_case = 403
+- Page size 10000, stop pada halaman kosong (bukan `recordsTotal`)
+- Delay 0.6 detik antar halaman list
+- `--tahun` dikirim server-side untuk SEMUA kategori, termasuk swakelola dan
+  darurat (diverifikasi live; memfilter di sisi client membuat paket yang
+  hanya *bernama* "Tahun 2026" ikut bocor ke hasil 2026)
+- Threshold resume: file HTML > 200 byte dianggap selesai
+- CSV delimiter `|`, encoding `utf-8-sig`
