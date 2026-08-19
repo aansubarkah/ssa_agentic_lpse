@@ -28,6 +28,9 @@ marketing/
 # Excel
 *.xlsx
 
+# PowerPoint
+*.pptx
+
 tweet*
 
 # Git worktrees
