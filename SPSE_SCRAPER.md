@@ -111,8 +111,8 @@ output/<slug>/<tahun>/
 The CSV lands at `output/<slug>/<tahun>/<slug>_<tahun>_<kategori>.csv` (one
 file per category run, not per category folder). Each package expands to one
 row per participant or winner; a package with no participants still yields a
-single blank-participant row. `output/` is gitignored and
-`output/all_lpse_urls.csv` must exist (the agency list, 734 rows:
+single blank-participant row. `output/` is gitignored. The agency list is
+`all_lpse_urls.csv` in the repo root, next to `spse.py` (734 rows:
 `name,url,old_url`, grouped by slug).
 
 ## Adding a sixth category

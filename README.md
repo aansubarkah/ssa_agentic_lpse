@@ -61,17 +61,14 @@ python spse.py --agency kemkes --tipe tender --tahun 2025 --excel
 
 ### Lokasi daftar instansi
 
-Secara default `spse.py` membaca `output/all_lpse_urls.csv`. Pada clone baru,
-salin dulu katalog dari root, atau pakai flag `--csv`. File ini memuat URL LPSE
-seluruh kementerian, lembaga, dan pemda Indonesia, jadi `--agency` bisa dipakai
-untuk instansi mana pun:
+`spse.py` membaca `all_lpse_urls.csv` dari folder yang sama dengan script-nya
+(repo root, file yang di-track git), jadi clone baru langsung jalan tanpa langkah
+tambahan. Katalog ini memuat URL LPSE seluruh kementerian, lembaga, dan pemda
+Indonesia, jadi `--agency` bisa dipakai untuk instansi mana pun. Pakai flag
+`--csv` untuk memakai katalog lain:
 
 ```bash
-mkdir -p output && cp all_lpse_urls.csv output/     # Linux/macOS
-mkdir output && copy all_lpse_urls.csv output\       # Windows
-
-# atau tanpa menyalin:
-python spse.py --csv all_lpse_urls.csv --list-agencies
+python spse.py --csv katalog_lain.csv --list-agencies
 ```
 
 ## Command Options
@@ -87,7 +84,7 @@ python spse.py --csv all_lpse_urls.csv --list-agencies
 | `--skip-json` | Skip scrape daftar paket, pakai `list.json` yang ada |
 | `--skip-html` | Skip download HTML, pakai file yang ada |
 | `--skip-csv` | Skip export CSV |
-| `--csv PATH` | Path katalog instansi (default: `output/all_lpse_urls.csv`) |
+| `--csv PATH` | Path katalog instansi (default: `all_lpse_urls.csv` di samping `spse.py`) |
 | `--out DIR` | Root output (default: `output/`) |
 | `--dry` | Cek jumlah paket tanpa download |
 | `--list-agencies` | Cetak semua slug + nama instansi |

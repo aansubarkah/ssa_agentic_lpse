@@ -558,7 +558,9 @@ def entry_tab_url(base: str, kategori: str, paket_id: str) -> str:
     return base + CATEGORIES[kategori]["entry_tab"].format(id=paket_id)
 
 
-AGENCY_CSV = "output/all_lpse_urls.csv"
+# Agency catalog: the tracked all_lpse_urls.csv next to this script (repo
+# root), so a fresh clone works with no copy step and regardless of CWD.
+AGENCY_CSV = Path(__file__).resolve().parent / "all_lpse_urls.csv"
 
 
 def slug_from_url(url: str) -> str:

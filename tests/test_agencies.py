@@ -1,4 +1,4 @@
-from spse import load_agencies, match_agency, slug_from_url
+from spse import AGENCY_CSV, load_agencies, match_agency, slug_from_url
 
 CSV = """name,url,old_url
 "Badan Karantina Indonesia > LPSE Kementerian Pertanian","https://spse.inaproc.id/pertanian","https://lpse.pertanian.go.id"
@@ -47,6 +47,6 @@ def test_match_agency_returns_none_when_unknown(tmp_path):
 
 def test_real_csv_loads(tmp_path):
     # The shipped file has 734 data rows across far fewer distinct LPSE hosts.
-    agencies = load_agencies("output/all_lpse_urls.csv")
+    agencies = load_agencies(AGENCY_CSV)
     assert len(agencies) > 100
     assert any(a["slug"] == "jakarta" for a in agencies)
