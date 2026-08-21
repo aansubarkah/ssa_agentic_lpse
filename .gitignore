@@ -38,3 +38,6 @@ tweet*
 
 # Saved-page assets (CSS/JS), keep only the .htm fixtures
 html_examples/*_files/
+
+# Icon regeneration helper (local tool, not part of the scraper)
+make_icons.py
