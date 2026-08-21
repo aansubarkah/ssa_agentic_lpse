@@ -3,7 +3,8 @@
 Scraper untuk portal SPSE (Sistem Pengadaan Secara Elektronik) pemerintah
 Indonesia: **tender, non tender, pencatatan, swakelola, dan pengadaan
 darurat**, untuk **instansi dan tahun anggaran apapun**, lengkap dengan export
-CSV pipe-delimited (dan Excel opsional).
+CSV pipe-delimited **dan Excel (`.xlsx`)** yang keduanya ditulis secara
+default.
 
 ## File yang perlu dipakai
 
@@ -34,13 +35,13 @@ Empat file ikon di root untuk shortcut/aplikasi di desktop:
 ## Quick Start
 
 ```bash
-# Install satu-satunya dependency
-uv sync            # atau: pip install requests
+# Install dependency
+uv sync            # atau: pip install requests openpyxl
 
 # GUI: dropdown instansi, tipe, tahun, progress bar
 python spse.py
 
-# CLI: scrape + CSV
+# CLI: scrape + CSV + Excel (.xlsx ditulis otomatis)
 python spse.py --agency kemkes --tipe tender --tahun 2025
 
 # Uji coba kecil: 5 paket saja
@@ -55,8 +56,8 @@ python spse.py --list-agencies
 # Re-export CSV/Excel dari data yang sudah ada (tanpa network)
 python spse.py --agency kemkes --tipe tender --tahun 2025 --skip-json --skip-html
 
-# Sekalian export Excel (.xlsx)
-python spse.py --agency kemkes --tipe tender --tahun 2025 --excel
+# Kalau hanya butuh CSV, matikan Excel
+python spse.py --agency kemkes --tipe tender --tahun 2025 --no-excel
 ```
 
 ### Lokasi daftar instansi
@@ -80,7 +81,7 @@ python spse.py --csv katalog_lain.csv --list-agencies
 | `--tahun Y` | Tahun anggaran (default: tahun berjalan) |
 | `--limit N` | Batasi N paket (untuk testing) |
 | `--workers N` | Paralel download HTML (default: 8) |
-| `--excel` | Sekalian tulis file `.xlsx` |
+| `--excel` / `--no-excel` | Tulis file `.xlsx` di samping CSV. **Default: aktif**; pakai `--no-excel` untuk CSV saja |
 | `--skip-json` | Skip scrape daftar paket, pakai `list.json` yang ada |
 | `--skip-html` | Skip download HTML, pakai file yang ada |
 | `--skip-csv` | Skip export CSV |
@@ -121,7 +122,8 @@ output/
         │   ├── meta.json          # info run
         │   ├── failed.json        # paket yang gagal (kalau ada)
         │   └── <kode_paket>/      # HTML per tab untuk tiap paket
-        └── <slug>_<tahun>_<kategori>.csv
+        ├── <slug>_<tahun>_<kategori>.csv
+        └── <slug>_<tahun>_<kategori>.xlsx
 ```
 
 CSV: pipe-delimited (`|`), 35 kolom (`slug`, `nama_instansi`, `kategori`,
@@ -129,6 +131,14 @@ CSV: pipe-delimited (`|`), 35 kolom (`slug`, `nama_instansi`, `kategori`,
 `harga_kontrak`, `sumber_url`, `extra_json`), UTF-8 dengan BOM agar langsung
 terbuka benar di Excel. Satu paket di-expand menjadi satu baris per
 peserta/pemenang.
+
+Excel: `.xlsx` dengan isi dan urutan kolom yang sama, ditulis otomatis setelah
+CSV selesai (GUI, CLI, maupun pemakaian oleh AI agent). Baris pertama adalah
+header. Batas Excel adalah 1.048.576 baris per sheet, jadi kalau data melebihi
+**1.000.000 baris** sisanya dipecah otomatis ke sheet berikutnya: `data`,
+`data_2`, `data_3`, dan seterusnya. Setiap sheet mengulang baris header supaya
+bisa dibaca sendiri-sendiri. Matikan dengan `--no-excel` (CLI) atau lepas
+centang "Excel (.xlsx)" (GUI).
 
 ## Cara Kerja & Gotchas
 
@@ -148,7 +158,9 @@ peserta/pemenang.
 
 ## Environment
 
-- Python >= 3.14, satu dependency: `requests` (`uv sync`)
+- Python >= 3.14, dependency: `requests` + `openpyxl` (untuk export `.xlsx`).
+  Pasang dengan `uv sync` (atau `pip install requests openpyxl`). Kalau
+  `openpyxl` tidak ada, scraper tetap jalan dan hanya melewati langkah Excel
 - Tidak butuh Node.js; semua script Node.js lama ada di `legacy_js/` dan tidak
   dipakai lagi
 - Windows: script sudah memaksa UTF-8 di stdout/stderr (workaround cp1252)
@@ -187,3 +199,10 @@ peserta/pemenang.
   hanya *bernama* "Tahun 2026" ikut bocor ke hasil 2026)
 - Threshold resume: file HTML > 200 byte dianggap selesai
 - CSV delimiter `|`, encoding `utf-8-sig`
+- Excel default ON di semua entry point (GUI, CLI, agent). `run_pipeline(...)`
+  memakai `excel=True`; CLI memakai `--excel/--no-excel` dengan default `True`.
+  Agent yang hanya butuh CSV harus lewat `--no-excel` / `excel=False`
+- `export_excel()` menulis stream (`Workbook(write_only=True)`) dan memecah isi
+  tiap `SHEET_ROW_LIMIT = 1_000_000` baris data ke sheet `data`, `data_2`, ...
+  (batas keras Excel 1.048.576 baris per sheet); header diulang di tiap sheet.
+  `run_pipeline` mengembalikan path `.xlsx` di `stats["xlsx"]`

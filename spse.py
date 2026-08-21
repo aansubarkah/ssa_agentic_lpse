@@ -1,7 +1,9 @@
 """spse.py — scrape procurement data from https://spse.inaproc.id.
 
 Run with no arguments for a Tkinter GUI; run with arguments for a headless
-CLI suitable for automation. See SPSE_SCRAPER.md for the site contract and
+CLI suitable for automation. Every run writes both the pipe-delimited CSV and
+an .xlsx next to it; pass --no-excel to keep only the CSV.
+See SPSE_SCRAPER.md for the site contract and
 docs/plans/2026-08-17-spse-scraper-gui-design.md for the design rationale.
 """
 
@@ -1053,9 +1055,19 @@ def export_csv(packages_dir: Path, out_path: Path, slug: str, nama_instansi: str
     return written
 
 
-def export_excel(csv_path: Path, log=print, progress=None) -> Path | None:
+# A worksheet holds at most 1_048_576 rows including the header, so cap the
+# data rows per sheet below that and spill the rest into "data_2", "data_3", ...
+# Each spill sheet repeats the header row so every sheet reads on its own.
+SHEET_ROW_LIMIT = 1_000_000
+
+
+def export_excel(csv_path: Path, log=print, progress=None,
+                 rows_per_sheet: int = SHEET_ROW_LIMIT) -> Path | None:
     """Convert the CSV to .xlsx. openpyxl is imported here so the normal path
     keeps requests as the only dependency.
+
+    Data beyond rows_per_sheet spills into extra sheets rather than hitting
+    Excel's per-sheet row ceiling; the header is repeated on each sheet.
 
     progress(done, total) receives the number of CSV rows appended so the GUI
     bar keeps moving during the conversion; every 10_000th row also logs.
@@ -1071,12 +1083,28 @@ def export_excel(csv_path: Path, log=print, progress=None) -> Path | None:
         log(f"Excel: tidak bisa membaca {csv_path}: {err}")
         return None
     log(f"Excel: {total} baris CSV -> xlsx")
-    workbook = Workbook()
-    sheet = workbook.active
+    # write_only streams rows straight to disk; a full million-row workbook
+    # does not fit comfortably in memory otherwise.
+    workbook = Workbook(write_only=True)
+    sheet = workbook.create_sheet("data")
+    header: list[str] | None = None
+    sheets = 1
+    in_sheet = 0  # data rows written to the current sheet (header excluded)
     done = 0
     with open(csv_path, encoding="utf-8-sig", newline="") as handle:
         for row in csv.reader(handle, delimiter="|"):
-            sheet.append(row)
+            if header is None:
+                header = row
+                sheet.append(row)
+            else:
+                if in_sheet >= rows_per_sheet:
+                    sheets += 1
+                    sheet = workbook.create_sheet(f"data_{sheets}")
+                    sheet.append(header)
+                    in_sheet = 0
+                    log(f"Excel: sheet penuh, lanjut ke 'data_{sheets}'")
+                sheet.append(row)
+                in_sheet += 1
             done += 1
             # Throttle mid-run updates but always report the last row so the
             # bar completes even for small files.
@@ -1086,7 +1114,10 @@ def export_excel(csv_path: Path, log=print, progress=None) -> Path | None:
                 log(f"Excel: {done}/{total} baris")
     xlsx_path = csv_path.with_suffix(".xlsx")
     workbook.save(xlsx_path)
-    log(f"Excel: {xlsx_path}")
+    if sheets > 1:
+        log(f"Excel: {xlsx_path} ({sheets} sheet)")
+    else:
+        log(f"Excel: {xlsx_path}")
     return xlsx_path
 
 
@@ -1100,7 +1131,7 @@ def run_dir(slug: str, tahun: int, kategori: str, root: Path = OUTPUT_ROOT) -> P
 
 def run_pipeline(agency: dict, kategori: str, tahun: int,
                  do_json: bool = True, do_html: bool = True, do_csv: bool = True,
-                 workers: int = DEFAULT_WORKERS, excel: bool = False,
+                 workers: int = DEFAULT_WORKERS, excel: bool = True,
                  limit: int = 0, root: Path = OUTPUT_ROOT,
                  cancel=None, progress=None, log=print) -> dict:
     """Run the four phases for one agency, category and year.
@@ -1134,7 +1165,7 @@ def run_pipeline(agency: dict, kategori: str, tahun: int,
         ids = ids[:limit]
     log(f"{len(ids)} paket")
 
-    stats = {"paket": len(ids), "files": 0, "csv_rows": 0}
+    stats = {"paket": len(ids), "files": 0, "csv_rows": 0, "xlsx": None}
     if do_html and ids:
         html_stats = scrape_html(base, kategori, tahun, ids, html_dir,
                                  workers=workers, cancel=cancel,
@@ -1151,8 +1182,9 @@ def run_pipeline(agency: dict, kategori: str, tahun: int,
                                        tahun=tahun, base=base, log=log,
                                        progress=csv_progress if progress else None)
         if excel:
-            export_excel(csv_path, log=log,
-                         progress=excel_progress if progress else None)
+            xlsx_path = export_excel(csv_path, log=log,
+                                     progress=excel_progress if progress else None)
+            stats["xlsx"] = str(xlsx_path) if xlsx_path else None
     return stats
 
 
@@ -1206,8 +1238,8 @@ def launch_gui() -> None:
     ttk.Spinbox(frame, from_=1, to=32, textvariable=workers_var, width=6
                 ).grid(row=2, column=1, sticky="w", pady=2)
 
-    excel_var = tk.BooleanVar(value=False)
-    ttk.Checkbutton(frame, text="Excel juga", variable=excel_var
+    excel_var = tk.BooleanVar(value=True)
+    ttk.Checkbutton(frame, text="Excel (.xlsx)", variable=excel_var
                     ).grid(row=2, column=2, columnspan=2, sticky="w")
 
     phase_json = tk.BooleanVar(value=True)
@@ -1324,7 +1356,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Only the first N packages (0 = all)")
     parser.add_argument("--csv", default=AGENCY_CSV, help="Agency list csv")
     parser.add_argument("--out", default=str(OUTPUT_ROOT), help="Output root")
-    parser.add_argument("--excel", action="store_true", help="Also write .xlsx")
+    # Excel is on by default; --no-excel opts out for CSV-only runs.
+    parser.add_argument("--excel", action=argparse.BooleanOptionalAction,
+                        default=True, help="Write .xlsx alongside the CSV "
+                                           "(default: on, use --no-excel to skip)")
     parser.add_argument("--skip-json", action="store_true")
     parser.add_argument("--skip-html", action="store_true")
     parser.add_argument("--skip-csv", action="store_true")
@@ -1371,6 +1406,8 @@ def run_cli(argv: list[str]) -> int:
     )
     print(f"Selesai: {stats['paket']} paket, {stats['files']} file baru, "
           f"{stats['csv_rows']} baris CSV")
+    if stats.get("xlsx"):
+        print(f"Excel: {stats['xlsx']}")
     return 0
 
 

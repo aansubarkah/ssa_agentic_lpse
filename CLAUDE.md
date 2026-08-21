@@ -29,7 +29,10 @@ python spse.py --agency jakarta --tipe tender --tahun 2025
 # Test run: 5 paket
 python spse.py --agency kemkes --tipe tender --tahun 2025 --limit 5
 
-# Re-export CSV from already-scraped data (no network)
+# Every run writes both <slug>_<tahun>_<tipe>.csv and .xlsx; --no-excel skips the xlsx
+python spse.py --agency kemkes --tipe tender --tahun 2025 --no-excel
+
+# Re-export CSV + Excel from already-scraped data (no network)
 python spse.py --agency kemkes --tipe tender --skip-json --skip-html
 
 # Count packages
@@ -41,8 +44,8 @@ There is no build step. The test suite is pytest (dev-only); run it with
 
 ## Environment / commands
 
-- **Python** (managed by `uv`, requires Python >=3.14): single dependency `requests`.
-  - Install: `uv sync` (or `pip install requests`)
+- **Python** (managed by `uv`, requires Python >=3.14): `requests` plus `openpyxl` (Excel export).
+  - Install: `uv sync` (or `pip install requests openpyxl`)
   - Run: `uv run python spse.py ...` or plain `python spse.py ...`
 - **Node.js** v22, zero runtime deps (native `https` + `zlib`); `exceljs` is dev-only (used by `csv_to_excel.js`). `npm install` pulls dev deps.
 
