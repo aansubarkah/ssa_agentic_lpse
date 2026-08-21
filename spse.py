@@ -1188,12 +1188,172 @@ def run_pipeline(agency: dict, kategori: str, tahun: int,
     return stats
 
 
+def _autocomplete_entry_class():
+    """Build the AutocompleteEntry class lazily so tkinter stays optional."""
+    import tkinter as tk
+    from tkinter import ttk
+
+    LIST_LIMIT = 200
+
+    class AutocompleteEntry(ttk.Entry):
+        """Entry with a drop-down of suggestions filtered as the user types.
+
+        The 700+ instansi list is unusable as a plain Combobox, so this keeps
+        the entry fully typeable and shows matches in a borderless Toplevel
+        below it. Matching is token-based: every whitespace-separated word must
+        appear somewhere in the option, so "kem kes" finds "kemkes - ...".
+        """
+
+        def __init__(self, master, textvariable, options, **kwargs):
+            super().__init__(master, textvariable=textvariable, **kwargs)
+            self._var = textvariable
+            self._items = list(options)
+            self._popup = None
+            self._list = None
+            self._over_list = False
+            self._muted = False
+            self.bind("<KeyRelease>", self._on_key)
+            self.bind("<Down>", self._on_down)
+            self.bind("<Up>", self._on_up)
+            self.bind("<Return>", self._on_return)
+            self.bind("<Escape>", self._on_escape)
+            self.bind("<FocusOut>", self._on_focus_out)
+            self.bind("<Destroy>", lambda _e: self._hide())
+
+        # -- matching ---------------------------------------------------
+        def _matches(self, needle: str) -> list[str]:
+            words = needle.lower().split()
+            if not words:
+                return self._items
+            out = []
+            for option in self._items:
+                low = option.lower()
+                if all(word in low for word in words):
+                    out.append(option)
+            return out
+
+        # -- popup ------------------------------------------------------
+        def _show(self, items: list[str]) -> None:
+            if not items:
+                self._hide()
+                return
+            if self._popup is None:
+                self._popup = tk.Toplevel(self)
+                self._popup.wm_overrideredirect(True)
+                self._popup.wm_attributes("-topmost", True)
+                self._list = tk.Listbox(self._popup, activestyle="none",
+                                        exportselection=False)
+                bar = ttk.Scrollbar(self._popup, orient="vertical",
+                                    command=self._list.yview)
+                self._list.configure(yscrollcommand=bar.set)
+                self._list.pack(side="left", fill="both", expand=True)
+                bar.pack(side="right", fill="y")
+                self._list.bind("<ButtonRelease-1>", self._on_click)
+                self._list.bind("<Double-Button-1>", self._on_click)
+                self._list.bind("<Enter>", lambda _e: setattr(self, "_over_list", True))
+                self._list.bind("<Leave>", lambda _e: setattr(self, "_over_list", False))
+            shown = items[:LIST_LIMIT]
+            self._list.delete(0, "end")
+            for item in shown:
+                self._list.insert("end", item)
+            self._list.configure(height=min(8, len(shown)))
+            self.update_idletasks()
+            x, y = self.winfo_rootx(), self.winfo_rooty() + self.winfo_height()
+            self._popup.wm_geometry(f"{self.winfo_width()}x{self._popup_height()}+{x}+{y}")
+            self._popup.deiconify()
+            self._popup.lift()
+
+        def _popup_height(self) -> int:
+            self._popup.update_idletasks()
+            return max(self._popup.winfo_reqheight(), 20)
+
+        def _hide(self) -> None:
+            if self._popup is None:
+                return
+            try:
+                self._popup.withdraw()
+            except tk.TclError:  # popup already torn down with the window
+                self._popup = None
+
+        def _visible(self) -> bool:
+            return self._popup is not None and self._popup.winfo_ismapped()
+
+        def _pick(self, index: int) -> None:
+            value = self._list.get(index)
+            self._muted = True
+            self._var.set(value)
+            self._muted = False
+            self.icursor("end")
+            self.selection_clear()
+            self._hide()
+
+        def _move(self, step: int) -> None:
+            size = self._list.size()
+            if not size:
+                return
+            current = self._list.curselection()
+            index = (current[0] + step) if current else (0 if step > 0 else size - 1)
+            index = max(0, min(size - 1, index))
+            self._list.selection_clear(0, "end")
+            self._list.selection_set(index)
+            self._list.activate(index)
+            self._list.see(index)
+
+        # -- events -----------------------------------------------------
+        def _on_key(self, event) -> None:
+            if self._muted or event.keysym in {
+                    "Up", "Down", "Return", "Escape", "Tab", "Shift_L", "Shift_R",
+                    "Control_L", "Control_R", "Alt_L", "Alt_R", "Left", "Right"}:
+                return
+            self._show(self._matches(self._var.get()))
+
+        def _on_down(self, _event):
+            if not self._visible():
+                self._show(self._matches(self._var.get()))
+                return "break"
+            self._move(1)
+            return "break"
+
+        def _on_up(self, _event):
+            if self._visible():
+                self._move(-1)
+            return "break"
+
+        def _on_return(self, _event):
+            if self._visible() and self._list.curselection():
+                self._pick(self._list.curselection()[0])
+                return "break"
+            self._hide()
+            return None
+
+        def _on_escape(self, _event):
+            if self._visible():
+                self._hide()
+                return "break"
+            return None
+
+        def _on_click(self, event):
+            index = self._list.nearest(event.y)
+            if index >= 0:
+                self._pick(index)
+                self.focus_set()
+            return "break"
+
+        def _on_focus_out(self, _event) -> None:
+            if not self._over_list:
+                self._hide()
+
+    return AutocompleteEntry
+
+
 def launch_gui() -> None:
     """Open the desktop window. All Tk access stays on the main thread."""
     import queue
     import threading
     import tkinter as tk
     from tkinter import ttk
+
+    AutocompleteEntry = _autocomplete_entry_class()
 
     agencies = load_agencies()
     labels = [f"{a['slug']} - {a['names'][0] if a['names'] else ''}" for a in agencies]
@@ -1212,15 +1372,8 @@ def launch_gui() -> None:
 
     ttk.Label(frame, text="Instansi").grid(row=0, column=0, sticky="w")
     agency_var = tk.StringVar()
-    agency_box = ttk.Combobox(frame, textvariable=agency_var, values=labels, width=60)
+    agency_box = AutocompleteEntry(frame, agency_var, labels, width=60)
     agency_box.grid(row=0, column=1, columnspan=3, sticky="we", pady=2)
-
-    def filter_agencies(_event=None) -> None:
-        """Typeahead: 734 entries are unusable without filtering."""
-        needle = agency_var.get().lower()
-        agency_box["values"] = [l for l in labels if needle in l.lower()] or labels
-
-    agency_box.bind("<KeyRelease>", filter_agencies)
 
     ttk.Label(frame, text="Tipe").grid(row=1, column=0, sticky="w")
     tipe_var = tk.StringVar(value="tender")
